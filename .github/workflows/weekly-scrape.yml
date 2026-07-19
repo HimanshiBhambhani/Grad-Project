@@ -1,0 +1,100 @@
+name: Weekly Review Scraper
+
+on:
+  # Run every Monday at 6:00 AM IST (00:30 UTC)
+  schedule:
+    - cron: '30 0 * * 1'
+
+  # Allow manual trigger from GitHub UI
+  workflow_dispatch:
+    inputs:
+      max_reviews:
+        description: 'Max reviews per store'
+        required: false
+        default: '200'
+      store:
+        description: 'Which store to scrape'
+        required: false
+        default: 'both'
+        type: choice
+        options:
+          - both
+          - playstore
+          - appstore
+
+permissions:
+  contents: write
+
+jobs:
+  scrape:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: |
+          pip install --upgrade pip
+          pip install google-play-scraper app-store-scraper pandas python-dotenv tqdm
+
+      - name: Determine scrape flags
+        id: flags
+        run: |
+          MAX="${{ github.event.inputs.max_reviews || '200' }}"
+          STORE="${{ github.event.inputs.store || 'both' }}"
+          FLAGS="--max-reviews $MAX"
+          if [ "$STORE" = "playstore" ]; then
+            FLAGS="$FLAGS --playstore-only"
+          elif [ "$STORE" = "appstore" ]; then
+            FLAGS="$FLAGS --appstore-only"
+          fi
+          echo "flags=$FLAGS" >> "$GITHUB_OUTPUT"
+
+      - name: Run scraper
+        run: |
+          python scrape_reviews.py ${{ steps.flags.outputs.flags }}
+
+      - name: Commit new data
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          # Add scraped output files
+          git add Output/scrapes/
+
+          # Check if there are changes to commit
+          if git diff --cached --quiet; then
+            echo "No new reviews to commit."
+          else
+            DATE=$(date -u +"%Y-%m-%d")
+            LATEST_COUNT=$(wc -l < Output/scrapes/latest_scrape.csv)
+            TOTAL_COUNT=$(wc -l < Output/scrapes/all_scraped_reviews.csv)
+            git commit -m "chore: weekly scrape $DATE — $((LATEST_COUNT - 1)) new reviews (total: $((TOTAL_COUNT - 1)))"
+            git push
+            echo "Committed and pushed new review data."
+          fi
+
+      - name: Summary
+        if: always()
+        run: |
+          echo "## Scrape Results" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          if [ -f Output/scrapes/latest_scrape.csv ]; then
+            LATEST=$(wc -l < Output/scrapes/latest_scrape.csv)
+            echo "- **New reviews this run:** $((LATEST - 1))" >> $GITHUB_STEP_SUMMARY
+          fi
+          if [ -f Output/scrapes/all_scraped_reviews.csv ]; then
+            TOTAL=$(wc -l < Output/scrapes/all_scraped_reviews.csv)
+            echo "- **Cumulative total:** $((TOTAL - 1))" >> $GITHUB_STEP_SUMMARY
+          fi
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "_Triggered: ${{ github.event_name }}_" >> $GITHUB_STEP_SUMMARY

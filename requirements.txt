@@ -1,0 +1,21 @@
+# ── Data Extraction & Scraping ──
+google-play-scraper>=1.2.7
+app-store-scraper>=0.3.5
+praw>=7.7.0
+
+# ── Data Processing ──
+pandas>=2.0.0
+python-docx>=1.1.0
+
+# ── AI / Embeddings ──
+openai>=1.30.0
+
+# ── Vector Store ──
+faiss-cpu>=1.7.4
+
+# ── Dashboard ──
+streamlit>=1.35.0
+
+# ── Utilities ──
+python-dotenv>=1.0.0
+tqdm>=4.66.0
