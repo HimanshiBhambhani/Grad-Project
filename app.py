@@ -199,11 +199,53 @@ elif page == "❓ Strategic Questions":
         with st.spinner("Analyzing evidence..."):
 
             if filter_method == "Keyword Relevance (offline)":
-                # Simple keyword relevance filtering
-                q_lower = selected_q.lower()
-                keywords = [w for w in q_lower.split() if len(w) > 3 and w not in {"what", "does", "from", "that", "they", "this", "which", "more", "users", "user"}]
+                # Question-specific keyword sets for targeted retrieval
+                _QUESTION_KEYWORDS = {
+                    "Why do users repeatedly buy from the same categories?": [
+                        "same", "always", "habit", "routine", "repeat", "regular", "usual",
+                        "only buy", "grocery", "go-to", "stick with", "comfortable",
+                    ],
+                    "What prevents users from exploring new categories?": [
+                        "never tried", "don't trust", "scared", "risk", "won't buy",
+                        "afraid", "hesitant", "doubt", "unsure", "reluctant", "why would",
+                    ],
+                    "How do users discover products today?": [
+                        "found", "discover", "saw", "noticed", "search", "banner",
+                        "recommended", "suggestion", "notification", "stumbled", "browsing",
+                    ],
+                    "What role do habits play in shopping behavior?": [
+                        "habit", "always", "routine", "every week", "auto", "repeat",
+                        "same order", "muscle memory", "default", "go-to",
+                    ],
+                    "What information do users need before trying a new category?": [
+                        "review", "rating", "photo", "detail", "description", "compare",
+                        "specification", "warranty", "return", "genuine", "authentic", "trust",
+                    ],
+                    "What frustrations emerge repeatedly?": [
+                        "frustrated", "angry", "worst", "terrible", "pathetic", "issue",
+                        "problem", "broken", "damaged", "fake", "expired", "missing",
+                        "delayed", "wrong", "refund", "complaint",
+                    ],
+                    "Which user segments are more likely to experiment?": [
+                        "tried", "first time", "experiment", "new category", "surprised",
+                        "impressed", "good quality", "will buy again", "recommend",
+                        "happy", "loved", "great", "amazing", "excellent", "satisfied",
+                    ],
+                    "What unmet needs emerge consistently across discussions?": [
+                        "wish", "need", "want", "should", "missing", "lack", "if only",
+                        "why can't", "don't have", "add", "include", "option", "variety",
+                    ],
+                }
 
-                # Score each review by keyword overlap
+                keywords = _QUESTION_KEYWORDS.get(selected_q, [])
+                if not keywords:
+                    # Fallback: extract from question text
+                    q_lower = selected_q.lower()
+                    keywords = [w for w in q_lower.split() if len(w) > 4 and w not in {
+                        "users", "which", "their", "about", "would", "could", "should",
+                        "where", "these", "those", "other", "likely", "today",
+                    }]
+
                 def score_review(text):
                     text_lower = str(text).lower()
                     return sum(1 for kw in keywords if kw in text_lower)
@@ -213,7 +255,6 @@ elif page == "❓ Strategic Questions":
                 relevant = df_copy[df_copy["_relevance"] > 0].nlargest(20, "_relevance")
 
                 if relevant.empty:
-                    # Fallback: use all data
                     relevant = df.sample(min(20, len(df)))
 
                 reviews_list = relevant.to_dict("records")
