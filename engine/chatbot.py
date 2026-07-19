@@ -2,7 +2,7 @@
 engine/chatbot.py — RAG Chatbot for answering evaluator questions.
 
 Uses the FAISS vector index to retrieve relevant reviews, then feeds them as
-grounded context to GPT-4o-mini for evidence-backed conversational answers.
+grounded context to Groq (Llama 3.3 70B) for evidence-backed conversational answers.
 Falls back to offline keyword-based retrieval when no FAISS index is available.
 """
 
@@ -81,7 +81,7 @@ class RAGChatbot:
         self.index = faiss_index
         self.metadata = faiss_metadata
         self.has_faiss = faiss_index is not None
-        self.has_openai = bool(config.OPENAI_API_KEY)
+        self.has_api_key = bool(config.GROQ_API_KEY)
         self.conversation_history: list[dict] = []
 
         # Precompute corpus stats
@@ -176,7 +176,7 @@ class RAGChatbot:
         pillar_dist_str = ", ".join(f"{k}: {v}" for k, v in sorted(self._pillar_dist.items(), key=lambda x: -x[1]))
 
         # 3. Generate answer
-        if self.has_openai:
+        if self.has_api_key:
             answer = self._generate_ai(question, evidence_block, cat_dist_str, pillar_dist_str, len(evidence))
         else:
             answer = self._generate_offline(question, evidence)
@@ -188,8 +188,8 @@ class RAGChatbot:
         return {
             "answer": answer,
             "evidence_count": len(evidence),
-            "mode": "AI (GPT-4o-mini + FAISS)" if (self.has_openai and self.has_faiss)
-                    else "AI (GPT-4o-mini + keyword)" if self.has_openai
+            "mode": "AI (Groq Llama 3.3 + FAISS)" if (self.has_api_key and self.has_faiss)
+                    else "AI (Groq Llama 3.3 + keyword)" if self.has_api_key
                     else "Offline (keyword retrieval)",
             "sources_used": list(set(r.get("Source", "") for r in evidence)),
             "categories_in_evidence": list(set(r.get("Target Category", "") for r in evidence)),
@@ -204,10 +204,10 @@ class RAGChatbot:
         pillar_dist_str: str,
         num_results: int,
     ) -> str:
-        """Generate answer using GPT-4o-mini with RAG context."""
-        from openai import OpenAI
+        """Generate answer using Groq (Llama 3.3 70B) with RAG context."""
+        from groq import Groq
 
-        client = OpenAI(api_key=config.OPENAI_API_KEY)
+        client = Groq(api_key=config.GROQ_API_KEY)
 
         user_msg = CONTEXT_TEMPLATE.format(
             num_results=num_results,
@@ -228,7 +228,7 @@ class RAGChatbot:
 
         try:
             response = client.chat.completions.create(
-                model="gpt-4o-mini",
+                model=config.GROQ_MODEL,
                 messages=messages,
                 temperature=0.3,
                 max_tokens=1500,
@@ -244,7 +244,7 @@ class RAGChatbot:
         if not evidence:
             return (
                 "I couldn't find relevant evidence in the corpus for this question. "
-                "Try rephrasing, or ensure the FAISS index is built and OPENAI_API_KEY is set "
+                "Try rephrasing, or ensure the FAISS index is built and GROQ_API_KEY is set "
                 "for semantic search and AI-powered answers."
             )
 
@@ -272,7 +272,7 @@ class RAGChatbot:
             f"**Category breakdown:** {', '.join(f'{k} ({v})' for k, v in cats.most_common(5))}\n\n"
             f"**Pillar breakdown:** {', '.join(f'{k} ({v})' for k, v in pillars.most_common())}\n\n"
             f"**Representative quotes:**\n{quotes_block}\n\n"
-            f"*Note: This is an offline analysis. Set OPENAI_API_KEY for AI-powered, "
+            f"*Note: This is an offline analysis. Set GROQ_API_KEY for AI-powered, "
             f"nuanced answers with deeper theme extraction.*"
         )
 
@@ -283,10 +283,10 @@ class RAGChatbot:
     @property
     def mode_label(self) -> str:
         """Human-readable label for the current operating mode."""
-        if self.has_openai and self.has_faiss:
-            return "Full RAG (FAISS + GPT-4o-mini)"
-        elif self.has_openai:
-            return "AI + Keyword Retrieval (no FAISS index)"
+        if self.has_api_key and self.has_faiss:
+            return "Full RAG (FAISS + Groq Llama 3.3 70B)"
+        elif self.has_api_key:
+            return "AI + Keyword Retrieval (Groq, no FAISS index)"
         elif self.has_faiss:
             return "FAISS Retrieval + Offline Generation (no API key)"
         else:

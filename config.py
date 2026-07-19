@@ -47,10 +47,18 @@ REDDIT_CLIENT_ID = os.getenv("REDDIT_CLIENT_ID", "")
 REDDIT_CLIENT_SECRET = os.getenv("REDDIT_CLIENT_SECRET", "")
 REDDIT_USER_AGENT = os.getenv("REDDIT_USER_AGENT", "blinkit-data-engine/1.0")
 
-# ─────────────────────────── OpenAI (Classifier) ─────────────
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
-EMBEDDING_MODEL = "text-embedding-3-small"
-CLASSIFIER_MODEL = "gpt-4o-mini"  # cost-efficient for classification
+# ─────────────────────────── LLM Provider (Groq — Llama 3.3 70B) ────
+GROQ_API_KEY = os.getenv("GROQ_API_KEY", "")
+GROQ_MODEL = os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile")
+
+# ─────────────────────────── Embedding Provider (Gemini) ─────────
+GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY", "")
+GEMINI_EMBEDDING_MODEL = os.getenv("GEMINI_EMBEDDING_MODEL", "gemini-embedding-001")
+
+# ─────────────────────────── RAG Settings ────────────────────
+TOP_K = int(os.getenv("TOP_K", "5"))
+CHUNK_SIZE = int(os.getenv("CHUNK_SIZE", "500"))
+CHUNK_OVERLAP = int(os.getenv("CHUNK_OVERLAP", "100"))
 
 # ─────────────────────────── Category Taxonomy ───────────────
 # Primary expansion targets

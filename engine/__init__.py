@@ -1,6 +1,6 @@
 """
 engine/vectorstore.py — FAISS vector index for semantic search over cleaned reviews.
-Uses OpenAI text-embedding-3-small to embed review text, then builds a local FAISS index.
+Uses Google Gemini embedding model to embed review text, then builds a local FAISS index.
 Supports saving/loading the index to disk for persistence.
 """
 
@@ -17,14 +17,14 @@ logger = logging.getLogger(__name__)
 
 INDEX_PATH = config.OUTPUT_DIR / "faiss_index.bin"
 META_PATH = config.OUTPUT_DIR / "faiss_meta.pkl"
-EMBED_BATCH_SIZE = 100  # OpenAI embedding batch size
+EMBED_BATCH_SIZE = 100  # Gemini embedding batch size
 
 
 def _get_embeddings(texts: list[str]) -> np.ndarray:
-    """Get embeddings from OpenAI API in batches."""
-    from openai import OpenAI
+    """Get embeddings from Google Gemini API in batches."""
+    from google import genai
 
-    client = OpenAI(api_key=config.OPENAI_API_KEY)
+    client = genai.Client(api_key=config.GOOGLE_API_KEY)
     all_embeddings = []
 
     for i in range(0, len(texts), EMBED_BATCH_SIZE):
@@ -32,12 +32,11 @@ def _get_embeddings(texts: list[str]) -> np.ndarray:
         # Truncate very long texts
         batch = [t[:8000] for t in batch]
 
-        response = client.embeddings.create(
-            model=config.EMBEDDING_MODEL,
-            input=batch,
+        result = client.models.embed_content(
+            model=config.GEMINI_EMBEDDING_MODEL,
+            contents=batch,
         )
-        embeddings = [e.embedding for e in response.data]
-        all_embeddings.extend(embeddings)
+        all_embeddings.extend([e.values for e in result.embeddings])
 
         if (i + EMBED_BATCH_SIZE) % 500 == 0:
             logger.info("Embedded %d / %d texts...", i + EMBED_BATCH_SIZE, len(texts))

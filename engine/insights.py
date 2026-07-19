@@ -80,9 +80,10 @@ def generate_insight(
     Returns:
         Structured insight dict.
     """
-    from openai import OpenAI
+    import json as json_mod
+    from groq import Groq
 
-    client = OpenAI(api_key=config.OPENAI_API_KEY)
+    client = Groq(api_key=config.GROQ_API_KEY)
 
     # Build the evidence block
     reviews_block = ""
@@ -104,7 +105,7 @@ def generate_insight(
 
     try:
         response = client.chat.completions.create(
-            model="gpt-4o-mini",
+            model=config.GROQ_MODEL,
             messages=[
                 {"role": "system", "content": SYSTEM_PROMPT},
                 {"role": "user", "content": user_msg},
@@ -135,7 +136,7 @@ def generate_insight_offline(
 ) -> dict:
     """
     Offline insight generation using rule-based analysis (no API needed).
-    Less sophisticated but works without OpenAI.
+    Less sophisticated but works without Groq API key.
     """
     from collections import Counter
 

@@ -1,5 +1,5 @@
 """
-pipeline/classifier.py — Semantic classification using OpenAI GPT.
+pipeline/classifier.py — Semantic classification using Groq (Llama 3.3 70B).
 
 Assigns each surviving row:
   1. A Target Category (if not already classified)
@@ -57,10 +57,10 @@ Return ONLY the JSON object."""
 
 
 def _classify_single(text: str, source: str, rating: str, category: str) -> dict:
-    """Classify a single text row using OpenAI API."""
-    from openai import OpenAI
+    """Classify a single text row using Groq API (Llama 3.3 70B)."""
+    from groq import Groq
 
-    client = OpenAI(api_key=config.OPENAI_API_KEY)
+    client = Groq(api_key=config.GROQ_API_KEY)
 
     user_msg = USER_PROMPT_TEMPLATE.format(
         text=text[:1500],  # Truncate very long texts to save tokens
@@ -71,7 +71,7 @@ def _classify_single(text: str, source: str, rating: str, category: str) -> dict
 
     try:
         response = client.chat.completions.create(
-            model=config.CLASSIFIER_MODEL,
+            model=config.GROQ_MODEL,
             messages=[
                 {"role": "system", "content": SYSTEM_PROMPT},
                 {"role": "user", "content": user_msg},
@@ -128,9 +128,9 @@ def classify_dataframe(df: pd.DataFrame) -> pd.DataFrame:
 
     Adds columns: Target Category, Friction Pillar, Opportunity
     """
-    if not config.OPENAI_API_KEY:
+    if not config.GROQ_API_KEY:
         logger.error(
-            "OPENAI_API_KEY not set. Cannot run AI classification. "
+            "GROQ_API_KEY not set. Cannot run AI classification. "
             "Set it in .env or export as environment variable."
         )
         # Fall back: use existing categories, leave pillars empty
