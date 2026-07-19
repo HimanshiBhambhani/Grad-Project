@@ -1,0 +1,113 @@
+# Technical Specification & Problem Statement: Blinkit Multi-Channel Data Ingestion & Analytics Engine
+
+## 1. Executive Strategic Context & Business Goal
+*   **Target Product/Company:** Blinkit (Quick-Commerce Platform).
+*   **Operational Team:** Growth Team (Catalog Cross-Shopping Initiative).
+*   **Core Friction Space:** Users exhibit entrenched "surgical intent." They complete recurring orders for high-frequency grocery staples (milk, eggs, snacks) in under 60 seconds but suffer from severe **Cross-Shopping Inertia**—rarely exploring or purchasing from high-margin lifestyle expansion categories.
+*   **Target Expansion Categories:** Electronics/Accessories, Premium Beauty/Skincare/Cosmetics, Pet Care, Baby Products, Home & Cleaning, Intimate & Personal Care, Pharmacy & Health/Wellness — plus contextually relevant `general` non-grocery feedback.
+*   **North Star Strategic Metric:** Increase the percentage of Monthly Active Customers (MAC) who purchase products from at least one new category every month (e.g., converting a grocery buyer into a premium beauty or pet care consumer).
+*   **Engine Purpose:** Per **Part 1 of the Assignment Mandate**, before designing features, we must build a functional, deployed AI-powered discovery engine to analyze consumer feedback at scale. This document sets out the comprehensive technical requirements for the multi-channel scraping, extraction, filtering, and classification engine.
+
+---
+
+## 2. Dual-Pathway Ingestion Architecture
+The data collection architecture operates as a hybrid engine, merging dynamic live network data feeds with structured historical and community listening layers.
+
+
+[DUAL-CHANNEL DATA INTAKE PORTAL]
+               /                                 \
+              /                                   \
+[Pathway A: Dynamic Stream]            [Pathway B: Static & Historical Engine]
+Live Programmatic Play Store           • Curated Community Target Thread URLs (32)
+API: com.grofers.customerapp           • Uncleaned Text Files (Claude/Perplexity Dumps)
+Live Apple App Store                   • Pre-classified Reddit CSV (19 rows)
+ID: 960335206                          • links-data.docx
+\                                   /
+\                                 /
+▼                               ▼
+┌───────────────────────────────────────────────────────────┐
+│         UNIFIED CLEANING, FILTERING & REFINERY NODE       │
+│ 1. Star-Rating Interceptor (Drop 5-Star Praise)           │
+│ 2. Deterministic Logistics Noise Trash Filter             │
+│ 3. Strict Expansion Category Vertical Isolation           │
+└─────────────────────────────┬─────────────────────────────┘
+│
+▼
+┌───────────────────────────────────────────────────────────┐
+│          SEMANTEC INTERPRETATION & PILLAR MAPPING         │
+│   - Habitual Tunnel Vision   - Discovery Blind Spots      │
+│   - Quality & Authenticity   - Value Disconnection        │
+└─────────────────────────────┬─────────────────────────────┘
+│
+▼
+┌───────────────────────────────────────────────────────────┐
+│                    OUTPUT DATA WAREHOUSE                  │
+│     Unified Markdown Table / Relational DataFrame Matrix  │
+└───────────────────────────────────────────────────────────┘
+
+### Pathway A: Live Programmatic App Store Streams
+*   **Google Play Store:**
+    *   **Package Identifier:** `com.grofers.customerapp` (Blinkit's active production package signature).
+    *   **Regional Constraints:** `country='in'` (India) and `lang='en'` (English).
+    *   **Intake Rules:** `sort=Sort.NEWEST`, batch size of 50–60 reviews per invocation. Implemented in `scrapers/playstore.py`.
+*   **Apple App Store:**
+    *   **App ID:** `960335206` (Blinkit: Groceries & more).
+    *   **Country:** `in` (India).
+    *   **Intake Rules:** Up to 200 reviews per invocation. Implemented in `scrapers/appstore.py`.
+*   **Automation:** Both scrapers run weekly via GitHub Actions (`.github/workflows/weekly-scrape.yml`) — every Monday at 6:00 AM IST. New reviews are deduplicated and committed to `Output/scrapes/all_scraped_reviews.csv`.
+
+### Pathway B: Curated Social Threads & Raw Historical Text Processing Node
+*   **The Ingestion Inputs:** 
+    1. **Historical Review Dumps (CSV):** Two large CSV files containing 28,255 rows each, covering 7 source channels:
+       *   `reviews_raw.csv` — Perplexity-driven extraction from Play Store, App Store, Reddit, YouTube, HackerNews, PissedConsumer.
+       *   `Ankesh-reviews_raw.csv` — Claude-driven extraction from the same channels.
+       *   Each row has: source channel, date, rating, text, category, and URL.
+    2. **Curated Reddit Thread URLs:** 32 high-signal public Reddit thread URLs across 4 groups, stored in `Data/Reddit Data URLs`:
+       *   14 Electronics threads (`r/FuckBlinkit`, `r/headphonesindia`, `r/GadgetsIndia`, `r/Kochi`, etc.)
+       *   8 Books/Gold/Others threads (`r/Indianbooks`, `r/delhi`, `r/pune`, `r/indiasocial`, etc.)
+       *   7 Beauty/Skincare threads (`r/IndianBeautyTalks`, `r/DesiFragranceAddicts`, `r/PerfumeIndia`, etc.)
+       *   3 Price comparison threads (`r/jaipur`, `r/Frugal_Ind`, `r/delhi`)
+       *   Additional URLs sourced from `Data/links-data.docx`.
+    3. **Pre-classified Reddit Data:** `SourceThreadTitleSite-PlatformBlinkit-TargetCatego.csv` — 19 Reddit threads already mapped to Target Category and Friction Pillar by manual expert labeling.
+    Refer the `Data/` folder for all input files.
+*   **Reddit Scraper:** Implemented in `scrapers/reddit.py` using PRAW (manual invocation only — Reddit API rate limits prevent automated weekly runs).
+*   **The Ingestion Role:** The engine ingests all sources, normalizes column names, maps category aliases to canonical labels, deduplicates on text content (56,530 → 28,274 rows), and unifies them into the same pipeline as the live scrapers.
+
+---
+
+## 3. Strict Cleaning & Noise Interception Rules (The "Trash Filter")
+Raw public feedback is heavily saturated with supply-chain logistics and operations metadata. To optimize token costs and guarantee downstream AI systems look *only* at strategic catalog conversion bottlenecks, every text row across both pathways must clear this three-stage filter matrix:
+
+1.  **Strict Transactional Noise Filter:** Programmatically scan the text content block. If a comment or review focuses primarily on backend logistics or driver operations rather than app shopping habits, **drop the entire row immediately**.
+    *   *Blacklisted Target Tokens:* `"late delivery"`, `"delivery boy rude"`, `"refund pending"`, `"money deducted"`, `"payment failed"`, `"upi failed"`, `"gpay"`, `"app crash"`, `"coupon code invalid"`, `"driver behavior"`, `"otp not received"`.
+2.  **Low-Star / High-Friction Focus:** Programmatically inspect star metrics or text sentiment. Drop all 5-star praise strings ("Good app", "Very fast"). **Only keep rows scoring 4-stars or below**, or text strings that explicitly convey hesitation, consumer anxiety, skepticism, or systemic UX frustration.
+3.  **Vertical Category Isolation:** Automatically filter out complaints regarding standard grocery staples (e.g., "potatoes were rotten", "milk packet leaked"). Isolate and preserve text strings tied to our non-grocery target expansion segments: Electronics/Accessories, Beauty/Skincare/Cosmetics, Pet Care, Baby Products, Home & Cleaning, Intimate & Personal Care, and Pharmacy & Health. Rows tagged `general` undergo contextual keyword inspection — kept only if they reference expansion-category products.
+
+---
+
+## 4. Semantic Framing & Classification Protocol
+Every row that survives the data filters must be mathematically interpreted and assigned by the AI analyst to exactly one of the **4 Core Growth Friction Pillars**:
+
+*   **Habitual Tunnel Vision:** Entrenched customer path-dependency. Users behave like automated surgical buyers—opening the app to purchase routine grocery baskets and checking out immediately without scrolling or clicking alternative category tabs.
+*   **Quality & Authenticity Risk:** Core category trust deficits. Consumers express deep anxiety over dark-store environment conditions (e.g., worries that tin-roof dark stores overheat and degrade active skincare serums), counterfeit product items, or a lack of clear brand warranty validation framework on expensive gadgets.
+*   **Discovery Blind Spots:** Systemic catalog visibility failure. Users explicitly state they "had no idea" Blinkit sold these goods, blaming poor search query parsing, hidden navigation drop-downs, or dynamic promotional banners that are ignored because they look like generic website ads.
+*   **Immediate Value Disconnection:** Pack sizing or unit economics discrepancy. Users run unfavorable price-per-gram or volume size comparisons against legacy bulk subscription networks (Amazon) or vertical specialists (Nykaa, Supertails).
+
+---
+
+## 5. Output Format & Unified Database Schema
+The engine must export the consolidated, clean data rows exclusively as a structured table array or relational Pandas DataFrame matching this precise metadata schema:
+
+| Column Name | Expected Value Assignment Rules |
+| :--- | :--- |
+| **Source** | Assign strictly based on origin channel: `"Play Store Live Stream"`, `"App Store Live Stream"`, `"Reddit Link"`, `"Play Store Historical Dump"`, `"Reddit Historical Dump"`, or `"Historical Dump"`. |
+| **Platform** | Must populate uniformly as `"Blinkit"`. |
+| **Target Category** | Must map to one of the non-grocery expansion categories: `electronics`, `personal_care_beauty`, `pet`, `baby`, `home_cleaning`, `intimate_personal`, `pharmacy_health`, or `general` (when contextually relevant). |
+| **Friction Pillar** | Must choose exactly one of the 4 defined pillars. |
+| **Raw Content** | The verified, cleaned text string snippet or user comment verbatim. |
+| **Opportunity** | A sharp, strategic growth PM tactical hypothesis indicating how to refactor the product to clear that exact user complaint block. |
+
+---
+
+## Execution Directives for the Developer Agent
+Using the above instructions, build or optimize a cohesive data parsing implementation. Ensure data structures are fully prepared to pass text arrays smoothly downstream into our local-memory FAISS vector indexing logic (`text-embedding-3-small`) and serve our active Streamlit runtime layout tabs. Do not truncate datasets or drop rows that clear the ingestion filters.
