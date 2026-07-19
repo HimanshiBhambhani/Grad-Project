@@ -128,6 +128,9 @@ def main():
     new_data = pd.concat(new_dfs, ignore_index=True)
     logger.info("Total new reviews this run: %d", len(new_data))
 
+    # Ensure output directory exists
+    CUMULATIVE_CSV.parent.mkdir(parents=True, exist_ok=True)
+
     # Save latest scrape separately (useful for debugging)
     new_data.to_csv(str(LATEST_CSV), index=False)
     logger.info("Saved latest scrape: %s", LATEST_CSV)
@@ -135,7 +138,11 @@ def main():
     # ── Merge with cumulative data ──
     existing = _load_existing()
     if not existing.empty:
-        combined = pd.concat([existing, new_data], ignore_index=True)
+        # Align columns before concat to avoid NaN mismatches
+        shared_cols = list(set(existing.columns) & set(new_data.columns))
+        combined = pd.concat(
+            [existing[shared_cols], new_data[shared_cols]], ignore_index=True
+        )
     else:
         combined = new_data
 
@@ -154,6 +161,13 @@ def main():
         for src, count in combined["source_raw"].value_counts().items():
             logger.info("  %-20s %d", src, count)
 
+    # Always exit 0 if we scraped any reviews
+    sys.exit(0)
+
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except Exception as e:
+        logger.error("Unexpected fatal error: %s", e)
+        sys.exit(1)

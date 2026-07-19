@@ -62,22 +62,23 @@ jobs:
       - name: Run scraper
         run: |
           python scrape_reviews.py ${{ steps.flags.outputs.flags }}
+        continue-on-error: false
 
       - name: Commit new data
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
-          # Add scraped output files
-          git add Output/scrapes/
+          # Force-add scraped files (may be gitignored)
+          git add --force Output/scrapes/ || true
 
           # Check if there are changes to commit
           if git diff --cached --quiet; then
             echo "No new reviews to commit."
           else
             DATE=$(date -u +"%Y-%m-%d")
-            LATEST_COUNT=$(wc -l < Output/scrapes/latest_scrape.csv)
-            TOTAL_COUNT=$(wc -l < Output/scrapes/all_scraped_reviews.csv)
+            LATEST_COUNT=$(wc -l < Output/scrapes/latest_scrape.csv || echo 1)
+            TOTAL_COUNT=$(wc -l < Output/scrapes/all_scraped_reviews.csv || echo 1)
             git commit -m "chore: weekly scrape $DATE — $((LATEST_COUNT - 1)) new reviews (total: $((TOTAL_COUNT - 1)))"
             git push
             echo "Committed and pushed new review data."
