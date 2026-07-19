@@ -1,0 +1,228 @@
+================================================================================
+BLINKIT DISCOVERY ENGINE - CHATBOT GUARDRAILS & UX SPECIFICATION
+================================================================================
+Version: 1.0
+Last Updated: 19 July 2026
+
+================================================================================
+SECTION 1: SAFETY & COMPLIANCE
+================================================================================
+
+1.1 NO BUYING ADVICE
+- The chatbot must NEVER recommend, suggest, or advise purchasing from any platform
+- Detected patterns: should I buy, suggest, recommend, which is better,
+  worth buying, best platform, which app, where should I,
+  should I use/switch/order/shop, is it worth, advise me,
+  better to buy/use/order
+- Response: Polite refusal + redirect to factual analysis
+- Implementation: _BUYING_ADVICE_RE regex in engine/chatbot.py
+
+1.2 BRAND NEUTRALITY
+- NEVER compare Blinkit favorably or unfavorably to Zepto, Swiggy Instamart,
+  Amazon, Flipkart, BigBasket, JioMart, or any competitor
+- Detected patterns: blinkit vs, zepto or, which platform, better than,
+  switch to, compared to, which delivery/grocery/shopping app
+- Response: Refuse and explain dataset bias (~95% Blinkit-focused data)
+- Implementation: _COMPARISON_RE regex in engine/chatbot.py
+
+1.3 PII FILTERING
+- Strip all personally identifiable information from displayed quotes:
+  * Email addresses
+  * Phone numbers (Indian +91 and international)
+  * Reddit/social media usernames (u/username, @handle)
+  * IP addresses (IPv4)
+  * Aadhaar-pattern numbers (12-digit)
+  * Order IDs / transaction references (OD/ORD/TXN patterns)
+- Applied automatically before any source quote is shown
+- Implementation: engine/pii_filter.py
+
+1.4 PROMPT INJECTION DEFENSE
+- Detect and block manipulation attempts:
+  * ignore previous/all/your/above instructions/rules/prompts
+  * pretend you are / act as
+  * new instructions / forget your rules
+  * system prompt / jailbreak / DAN mode
+  * bypass / override / disregard
+  * you are now
+- Response: "I'm designed to analyze Blinkit user feedback only.
+  I can't modify my operating parameters."
+- Implementation: _INJECTION_RE regex in engine/chatbot.py
+
+1.5 NO SPECULATION
+- If data doesn't cover a topic, say "insufficient data" rather than guessing
+- Never extrapolate beyond what the 1,808 cleaned reviews support
+- Minimum evidence threshold: 2 source reviews required for any claim
+- Implementation: MIN_EVIDENCE constant + hallucination guard in ask()
+
+================================================================================
+SECTION 2: RESPONSE QUALITY
+================================================================================
+
+2.1 CONFIDENCE SCORING
+- High confidence: 8+ supporting reviews (green circle emoji)
+- Medium confidence: 3-7 supporting reviews (yellow circle emoji)
+- Low confidence: <3 supporting reviews (red circle emoji)
+- Always disclose: "Based on X reviews across Y categories"
+- Implementation: _confidence() static method
+
+2.2 SOURCE CITATION
+- Every factual claim must cite at least 1 source review
+- Format: "quote text" - Source, Category, Pillar
+- If no supporting evidence found, refuse gracefully
+- System prompt rule #1 enforces this
+
+2.3 TEMPORAL CONTEXT
+- Flag if evidence is older than 6 months
+- Note data recency in responses when relevant
+- Current data window: Play Store reviews + Reddit threads (scraped up to July 2026)
+
+2.4 THIN CATEGORY WARNINGS
+- Categories with fewer than 20 reviews trigger a warning:
+  * pet: 16 reviews
+  * baby: 15 reviews
+  * intimate_personal: 19 reviews
+  * home_cleaning: 18 reviews
+- Warning shown in UI with caution emoji
+- Implementation: _thin_warning() method, THIN_CATEGORIES constant
+
+2.5 CONTRADICTION SURFACING
+- When reviews contain opposing views, present BOTH sides
+- Detects positive keywords (good, great, excellent, love, etc.) vs
+  negative keywords (bad, worst, terrible, fake, fraud, etc.)
+- If 2+ positive AND 2+ negative reviews found: surfaces mixed signals
+- Never cherry-pick one side to support a narrative
+- Implementation: _contradictions() static method
+
+2.6 HALLUCINATION GUARD
+- If fewer than 2 source reviews match the query, refuse to answer
+- Response: "I don't have sufficient data to answer this question reliably.
+  Our dataset contains 1,808 reviews focused on non-grocery categories."
+- Implementation: MIN_EVIDENCE check in ask()
+
+================================================================================
+SECTION 3: INTERFACE & UX
+================================================================================
+
+3.1 WELCOME MESSAGE
+- Displayed on first load / chat clear
+- Contains:
+  * Purpose statement (analyze X reviews across Y categories)
+  * 4 example questions
+  * Clear limitations disclaimer (no buying advice, no comparisons,
+    no recommendations)
+
+3.2 SUGGESTED FOLLOW-UPS
+- After each response, suggest 2-3 related questions
+- Based on the category/pillar of the current answer
+- Displayed as clickable buttons (arrow emoji prefix)
+- Generated dynamically by follow_ups() method
+
+3.3 EXPORT CONVERSATION
+- Download full chat history as .txt file
+- Includes all questions, answers, and metadata
+- Button in sidebar (download emoji)
+- Implementation: export_history() method + st.download_button
+
+3.4 RESPONSE LENGTH CONTROL
+- Toggle in sidebar: Brief vs Detailed
+- Brief: 2-3 sentences with key evidence only (max_tokens=800)
+- Detailed: Full analysis with quotes (max_tokens=1500)
+- Default: Detailed
+- Stored in Streamlit session via st.sidebar.toggle
+
+3.5 LOADING INDICATORS
+- Show "Searching 1,808 reviews..." during retrieval (magnifying glass emoji)
+- Spinner on Streamlit UI via st.spinner
+
+================================================================================
+SECTION 4: EVALUATOR-FACING FEATURES
+================================================================================
+
+4.1 METHODOLOGY TRANSPARENCY
+- Expandable "Evidence details" panel per response
+- Shows: operating mode, number of sources searched, categories covered,
+  retrieval method (FAISS semantic / keyword fallback)
+- Implementation: st.expander in chat display
+
+4.2 DATA PIPELINE VISIBILITY
+- Sidebar shows: 28,274 raw -> 1,808 clean (93.6% filtered)
+- Source count and category count
+- Always visible on chatbot page
+
+4.3 THEME TRACEABILITY
+- Each insight references specific friction pillars
+- Evidence block includes Pillar tag for every retrieved review
+- Categories and pillars listed in methodology panel
+
+4.4 EDGE CASE HANDLING LOG
+- Refused queries logged via logger.warning
+- Refusal reason displayed to user (safety, insufficient data)
+- Mode label shows current operating state
+
+================================================================================
+SECTION 5: REFUSAL PROTOCOL
+================================================================================
+
+5.1 BUYING ADVICE REFUSAL
+Template:
+"(prohibited emoji) I'm designed to analyze user feedback patterns, not provide
+purchasing recommendations. I can share what users report about [detected topic].
+Try asking: '[suggested alternative question]'"
+
+5.2 PLATFORM COMPARISON REFUSAL
+Template:
+"(prohibited emoji) I can't provide platform comparisons or recommendations.
+Our dataset is primarily composed of Blinkit user reviews (~95%), making
+any cross-platform comparison statistically biased and misleading.
+I can help you explore what Blinkit users report about specific categories
+or friction patterns.
+Try: '[suggested alternative question]'"
+
+5.3 PROMPT INJECTION REFUSAL
+Template:
+"(prohibited emoji) I'm designed to analyze Blinkit user feedback only.
+I can't modify my operating parameters.
+Try asking about: user friction patterns, category insights, or recurring themes."
+
+5.4 INSUFFICIENT DATA REFUSAL
+Template:
+"(red circle emoji) I don't have sufficient data to answer this question reliably.
+Our dataset contains 1,808 reviews focused on non-grocery categories: electronics,
+beauty, pet care, baby products, pharmacy, home cleaning, and intimate care.
+Try asking about one of these categories specifically."
+
+================================================================================
+SECTION 6: DATASET BIAS AWARENESS
+================================================================================
+
+6.1 DATA COMPOSITION
+- Primary source: Blinkit Play Store reviews + Blinkit-focused Reddit threads
+- The dataset is intentionally Blinkit-centric for the Growth Team's initiative
+- Competitor mentions exist ONLY as user-reported context, not as balanced data
+
+6.2 WHY CROSS-PLATFORM COMPARISONS ARE REFUSED
+- Dataset contains ~95% Blinkit-focused content
+- Any "Blinkit vs Zepto" answer would be statistically biased
+- Zepto/Instamart mentions are anecdotal, not systematic
+- Presenting biased comparisons as analysis would be misleading
+
+6.3 COMPETITOR MENTION HANDLING
+- If a user review mentions a competitor, the quote can be shown
+- But the chatbot must NOT draw comparative conclusions
+- Frame as: "Some users mentioned [competitor] in their Blinkit reviews"
+  not as: "[competitor] is better/worse than Blinkit"
+
+================================================================================
+SECTION 7: IMPLEMENTATION FILES
+================================================================================
+
+| File                    | Purpose                                            |
+|-------------------------|----------------------------------------------------| 
+| engine/chatbot.py       | RAG chatbot with all safety guardrails              |
+| engine/pii_filter.py    | PII stripping (email, phone, usernames, IPs, etc.) |
+| app.py (chatbot tab)    | Streamlit UI with welcome, follow-ups, export, etc.|
+| Docs/chatbot-guidelines.txt | This specification document                    |
+
+================================================================================
+END OF DOCUMENT
+================================================================================

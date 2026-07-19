@@ -1,44 +1,127 @@
 """
-engine/chatbot.py — RAG Chatbot for answering evaluator questions.
+engine/chatbot.py - RAG Chatbot with full safety guardrails.
 
-Uses the FAISS vector index to retrieve relevant reviews, then feeds them as
-grounded context to Groq (Llama 3.3 70B) for evidence-backed conversational answers.
-Falls back to offline keyword-based retrieval when no FAISS index is available.
+Safety: No buying advice, brand neutrality, prompt injection defense,
+PII filtering, hallucination guard, confidence scoring, thin category warnings,
+contradiction surfacing, suggested follow-ups.
 """
 
-import json
 import logging
+import re
 from collections import Counter
 
 import pandas as pd
 
 import config
+from engine.pii_filter import strip_pii
 
 logger = logging.getLogger(__name__)
 
-# ─────────────────── System Prompt ───────────────────
+# --------------- Safety Patterns ---------------
 
-CHATBOT_SYSTEM_PROMPT = """You are a senior product analyst embedded in Blinkit's Growth Team.
+_BUYING_ADVICE_RE = re.compile(
+    r"\b("
+    r"should\s+i\s+buy|would\s+you\s+recommend|suggest\s+(?:me|a|an|the)|"
+    r"which\s+(?:is|one\s+is)\s+better|worth\s+buying|best\s+(?:platform|app|site)|"
+    r"which\s+app|where\s+should\s+i|recommend\s+(?:me|a)|"
+    r"should\s+i\s+(?:use|switch|order|shop|get|download|install)|"
+    r"is\s+it\s+worth|advise\s+(?:me|on)|which\s+(?:should|would)|"
+    r"better\s+to\s+(?:buy|use|order|shop)|good\s+(?:to\s+buy|for\s+buying)"
+    r")\b",
+    re.IGNORECASE,
+)
+
+_COMPARISON_RE = re.compile(
+    r"\b("
+    r"blinkit\s+vs|vs\s+blinkit|blinkit\s+or\s+zepto|zepto\s+or\s+blinkit|"
+    r"blinkit\s+or\s+instamart|instamart\s+or\s+blinkit|"
+    r"blinkit\s+or\s+amazon|amazon\s+or\s+blinkit|"
+    r"blinkit\s+or\s+flipkart|blinkit\s+or\s+bigbasket|blinkit\s+or\s+jiomart|"
+    r"zepto\s+vs|instamart\s+vs|which\s+platform|"
+    r"better\s+than\s+(?:blinkit|zepto|instamart|amazon|swiggy)|"
+    r"switch\s+to\s+(?:zepto|instamart|amazon|swiggy|flipkart|bigbasket)|"
+    r"compared\s+to\s+(?:zepto|instamart|amazon|swiggy|flipkart)|"
+    r"(?:zepto|instamart|swiggy|flipkart|bigbasket|jiomart)\s+(?:is\s+)?better|"
+    r"which\s+(?:delivery|grocery|shopping)\s+app"
+    r")\b",
+    re.IGNORECASE,
+)
+
+_INJECTION_RE = re.compile(
+    r"("
+    r"ignore\s+(?:previous|all|your|above)\s+(?:instructions|rules|prompts|guidelines)|"
+    r"pretend\s+(?:you\s+are|to\s+be)|"
+    r"act\s+as\s+(?:a|an|if)|"
+    r"new\s+instructions|forget\s+(?:your|all|previous)\s+(?:rules|instructions)|"
+    r"system\s+prompt|jailbreak|DAN\s+mode|"
+    r"bypass\s+(?:your|the|all)|override\s+(?:your|the|all)|"
+    r"disregard\s+(?:your|the|all|previous)|you\s+are\s+now"
+    r")",
+    re.IGNORECASE,
+)
+
+THIN_CATEGORIES = {"pet": 16, "baby": 15, "intimate_personal": 19, "home_cleaning": 18}
+MIN_EVIDENCE = 2
+
+# --------------- Refusal Templates ---------------
+
+_REFUSAL_BUY = (
+    "\U0001f6ab I'm designed to analyze user feedback patterns, not provide "
+    "purchasing recommendations. I can share what users report about {topic}.\n\n"
+    "**Try asking:** \"{suggestion}\""
+)
+
+_REFUSAL_CMP = (
+    "\U0001f6ab I can't provide platform comparisons or recommendations. "
+    "Our dataset is primarily composed of Blinkit user reviews (~95%), making "
+    "any cross-platform comparison statistically biased and misleading.\n\n"
+    "I can help you explore what Blinkit users report about specific categories "
+    "or friction patterns.\n\n"
+    "**Try:** \"{suggestion}\""
+)
+
+_REFUSAL_INJ = (
+    "\U0001f6ab I'm designed to analyze Blinkit user feedback only. "
+    "I can't modify my operating parameters.\n\n"
+    "**Try asking about:** user friction patterns, category insights, or recurring themes."
+)
+
+_REFUSAL_DATA = (
+    "\U0001f534 I don't have sufficient data to answer this question reliably. "
+    "Our dataset contains {n:,} reviews focused on non-grocery categories: "
+    "electronics, beauty, pet care, baby products, pharmacy, home cleaning, "
+    "and intimate care.\n\n"
+    "**Try asking about one of these categories specifically.**"
+)
+
+# --------------- System Prompt ---------------
+
+_SYS_PROMPT = """You are a senior product analyst embedded in Blinkit's Growth Team.
 You have access to a curated corpus of {num_reviews} cleaned customer reviews spanning 7+ channels
 (Play Store, App Store, Reddit, YouTube, HackerNews, PissedConsumer).
 
-Your job is to answer questions from an evaluator about Blinkit's cross-shopping inertia problem
-— why users stick to grocery staples and rarely purchase from expansion categories like Electronics,
-Beauty/Skincare, Pet Care, Baby, Pharmacy, Home Cleaning, and Intimate/Personal Care.
+Your job is to answer questions about Blinkit's cross-shopping inertia problem.
 
-## Rules
-1. **Ground every claim in evidence.** Cite verbatim quotes from the provided reviews.
-   Use the format: *"<quote>"* — <Source>, <Category>
-2. **Be specific.** Replace vague phrases with concrete examples from the data.
-3. **Organise answers** with clear structure: summary → key themes (with evidence) → implications.
-4. **Acknowledge gaps.** If the retrieved evidence doesn't fully answer the question, say so.
-5. **Reference the 4 Friction Pillars** when relevant:
+## STRICT RULES
+1. Ground every claim in evidence. Cite verbatim quotes: *"<quote>"* - <Source>, <Category>
+2. Be specific. Use concrete examples from the data.
+3. Organise: summary -> key themes (with evidence) -> implications.
+4. Acknowledge gaps. If evidence is insufficient, say so.
+5. Reference the 4 Friction Pillars when relevant:
    - Habitual Tunnel Vision (grocery-only habit lock)
    - Quality & Authenticity Risk (fake/counterfeit/storage fears)
    - Discovery Blind Spots (users don't know Blinkit sells X)
    - Immediate Value Disconnection (overpriced vs Amazon/Nykaa)
-6. **Stay concise.** Evaluators value density over length. Aim for 200-400 words unless the question demands more.
-7. **Never fabricate data.** If no evidence exists for a claim, don't make one.
+6. Stay concise. Aim for 200-400 words.
+7. Never fabricate data.
+8. NEVER give buying advice or recommend any platform.
+9. NEVER compare Blinkit with Zepto, Instamart, Amazon, Flipkart, or any competitor.
+   The dataset is Blinkit-centric; any comparison would be statistically biased.
+   If asked to compare, REFUSE and explain the dataset bias.
+10. NEVER suggest one platform is better than another.
+11. If a user review mentions a competitor, you may quote it but NEVER draw
+    comparative conclusions. Frame as: "Some users mentioned [competitor]"
+    not as "[competitor] is better/worse."
 
 ## Corpus Statistics
 - Total cleaned reviews: {num_reviews}
@@ -47,247 +130,420 @@ Beauty/Skincare, Pet Care, Baby, Pharmacy, Home Cleaning, and Intimate/Personal 
 - Source channels: {sources}
 """
 
-CONTEXT_TEMPLATE = """## Retrieved Evidence ({num_results} most relevant reviews)
+_CTX_TEMPLATE = """## Retrieved Evidence ({n} most relevant reviews)
 
-{evidence_block}
+{evidence}
 
 ## Corpus-Level Statistics
-- Category distribution: {category_dist}
-- Pillar distribution: {pillar_dist}
+- Category distribution: {cat_dist}
+- Pillar distribution: {pil_dist}
 
 ## User Question
 {question}
 
-Answer the question above using ONLY the evidence provided. Cite specific quotes."""
+Answer using ONLY the evidence provided. Cite specific quotes.
+Do NOT give buying advice or compare platforms."""
 
 
-# ─────────────────── Chatbot Class ───────────────────
+# --------------- Chatbot Class ---------------
 
 
 class RAGChatbot:
-    """
-    Retrieval-Augmented Generation chatbot backed by the FAISS vector index
-    over cleaned Blinkit reviews.
-    """
+    """RAG chatbot with full safety guardrails."""
 
-    def __init__(self, df: pd.DataFrame, faiss_index=None, faiss_metadata=None):
-        """
-        Args:
-            df: The full cleaned DataFrame (for stats and offline fallback).
-            faiss_index: A loaded FAISS index (or None for offline mode).
-            faiss_metadata: Corresponding metadata list (or None).
-        """
+    def __init__(self, df, faiss_index=None, faiss_metadata=None):
         self.df = df
         self.index = faiss_index
         self.metadata = faiss_metadata
         self.has_faiss = faiss_index is not None
         self.has_api_key = bool(config.GROQ_API_KEY)
-        self.conversation_history: list[dict] = []
+        self.conversation_history = []
 
-        # Precompute corpus stats
-        self._num_reviews = len(df)
-        self._categories = ", ".join(sorted(df["Target Category"].unique()))
-        self._top_pillar = df["Friction Pillar"].value_counts().index[0] if "Friction Pillar" in df.columns else "N/A"
-        self._sources = ", ".join(sorted(df["Source"].unique())) if "Source" in df.columns else "N/A"
-        self._category_dist = dict(df["Target Category"].value_counts())
-        self._pillar_dist = dict(df["Friction Pillar"].value_counts()) if "Friction Pillar" in df.columns else {}
-
-        self._system_prompt = CHATBOT_SYSTEM_PROMPT.format(
-            num_reviews=self._num_reviews,
-            categories=self._categories,
-            top_pillar=self._top_pillar,
+        self._n = len(df)
+        self._cats = ", ".join(sorted(df["Target Category"].unique()))
+        self._top_pil = (
+            df["Friction Pillar"].value_counts().index[0]
+            if "Friction Pillar" in df.columns else "N/A"
+        )
+        self._sources = (
+            ", ".join(sorted(df["Source"].unique()))
+            if "Source" in df.columns else "N/A"
+        )
+        self._cat_dist = dict(df["Target Category"].value_counts())
+        self._pil_dist = (
+            dict(df["Friction Pillar"].value_counts())
+            if "Friction Pillar" in df.columns else {}
+        )
+        self._sys = _SYS_PROMPT.format(
+            num_reviews=self._n,
+            categories=self._cats,
+            top_pillar=self._top_pil,
             sources=self._sources,
         )
 
-    # ─────────────────── Retrieval ───────────────────
+    # --- Safety ---
 
-    def _retrieve_faiss(self, query: str, top_k: int = 15) -> list[dict]:
-        """Semantic retrieval via FAISS."""
+    def _check_safety(self, q):
+        if _INJECTION_RE.search(q):
+            logger.warning("Injection blocked: %s", q[:80])
+            return _REFUSAL_INJ
+        if _COMPARISON_RE.search(q):
+            logger.warning("Comparison blocked: %s", q[:80])
+            return _REFUSAL_CMP.format(suggestion=self._alt(q, "cmp"))
+        if _BUYING_ADVICE_RE.search(q):
+            logger.warning("Buying advice blocked: %s", q[:80])
+            return _REFUSAL_BUY.format(
+                topic=self._topic(q), suggestion=self._alt(q, "buy")
+            )
+        return None
+
+    @staticmethod
+    def _topic(q):
+        q = q.lower()
+        mapping = {
+            "electronics": "electronics quality and delivery",
+            "beauty": "beauty product authenticity",
+            "skincare": "skincare product quality",
+            "pet": "pet care product availability",
+            "baby": "baby product experiences",
+            "pharmacy": "pharmacy product delivery",
+            "cleaning": "home cleaning products",
+            "intimate": "intimate care products",
+        }
+        for kw, t in mapping.items():
+            if kw in q:
+                return t
+        return "product quality and user experiences on Blinkit"
+
+    @staticmethod
+    def _alt(q, kind):
+        q = q.lower()
+        if kind == "cmp":
+            if "electronics" in q:
+                return "What are the main quality concerns Blinkit users report about electronics?"
+            if "beauty" in q or "skincare" in q:
+                return "What do Blinkit users say about beauty product authenticity?"
+            return "What are the most common frustrations Blinkit users report?"
+        if "electronics" in q:
+            return "What do users say about electronics quality on Blinkit?"
+        if "beauty" in q or "skincare" in q:
+            return "What are the top concerns about beauty products on Blinkit?"
+        if "pet" in q:
+            return "What do pet care buyers complain about most on Blinkit?"
+        return "What are the top user frustrations with non-grocery categories on Blinkit?"
+
+    # --- Confidence & Warnings ---
+
+    @staticmethod
+    def _confidence(evidence):
+        n = len(evidence)
+        if n >= 8:
+            return {"level": "high", "emoji": "\U0001f7e2",
+                    "description": f"High confidence - based on {n} supporting reviews"}
+        if n >= 3:
+            return {"level": "medium", "emoji": "\U0001f7e1",
+                    "description": f"Medium confidence - based on {n} supporting reviews"}
+        return {"level": "low", "emoji": "\U0001f534",
+                "description": f"Low confidence - only {n} supporting review(s)"}
+
+    @staticmethod
+    def _thin_warning(evidence):
+        cats = {r.get("Target Category", "") for r in evidence}
+        w = []
+        for c in cats:
+            if c in THIN_CATEGORIES:
+                w.append(
+                    f"\u26a0\ufe0f **{c}** has limited corpus data "
+                    f"({THIN_CATEGORIES[c]} total reviews). "
+                    f"Insights may not be fully representative."
+                )
+        return "\n".join(w) if w else None
+
+    @staticmethod
+    def _contradictions(evidence):
+        if len(evidence) < 4:
+            return None
+        pos_kw = {"good", "great", "excellent", "love", "best", "amazing",
+                  "happy", "satisfied", "perfect", "awesome"}
+        neg_kw = {"bad", "worst", "terrible", "horrible", "fake", "fraud",
+                  "scam", "poor", "awful", "useless", "waste", "pathetic"}
+        pos = sum(1 for r in evidence
+                  if any(w in str(r.get("Raw Content", "")).lower() for w in pos_kw))
+        neg = sum(1 for r in evidence
+                  if any(w in str(r.get("Raw Content", "")).lower() for w in neg_kw))
+        if pos >= 2 and neg >= 2:
+            return (
+                f"\u26a1 **Mixed signals detected:** {pos} reviews express "
+                f"satisfaction while {neg} report frustration. "
+                f"Both perspectives are reflected."
+            )
+        return None
+
+    # --- Follow-ups ---
+
+    def follow_ups(self, evidence):
+        cats = Counter(r.get("Target Category", "") for r in evidence)
+        pils = Counter(r.get("Friction Pillar", "") for r in evidence)
+        tc = cats.most_common(1)[0][0] if cats else None
+        tp = pils.most_common(1)[0][0] if pils else None
+        s = []
+        if tc and tc != "general":
+            s.append(f"What are the specific quality concerns in the {tc} category?")
+        pq = {
+            "Quality & Authenticity Risk":
+                "What evidence exists that users doubt product authenticity on Blinkit?",
+            "Habitual Tunnel Vision":
+                "How does the grocery habit lock-in manifest in user reviews?",
+            "Discovery Blind Spots":
+                "What evidence shows users are unaware of non-grocery categories?",
+            "Immediate Value Disconnection":
+                "How do users perceive Blinkit's pricing for non-grocery items?",
+        }
+        if tp and tp in pq:
+            s.append(pq[tp])
+        others = [c for c in cats if c != tc and c != "general"]
+        if others:
+            s.append(f"How does the {others[0]} category compare in user satisfaction?")
+        if not s:
+            s = [
+                "Which friction pillar has the highest impact on cross-shopping?",
+                "What are the top reasons users don't explore non-grocery categories?",
+            ]
+        return s[:3]
+
+    # --- Retrieval ---
+
+    def _faiss_retrieve(self, q, top_k=15):
         from engine import search
-        return search(query, self.index, self.metadata, top_k=top_k)
+        return search(q, self.index, self.metadata, top_k=top_k)
 
-    def _retrieve_keyword(self, query: str, top_k: int = 15) -> list[dict]:
-        """Offline keyword-overlap retrieval."""
-        q_lower = query.lower()
-        stop_words = {
+    def _keyword_retrieve(self, q, top_k=15):
+        stops = {
             "what", "does", "from", "that", "they", "this", "which", "more",
             "users", "user", "about", "with", "have", "their", "there", "been",
             "into", "will", "would", "could", "should", "than", "then", "when",
             "where", "your", "them", "some", "only", "also", "most", "very",
             "just", "like", "blinkit", "how", "why", "are", "the",
         }
-        keywords = [w for w in q_lower.split() if len(w) > 2 and w not in stop_words]
+        kws = [w for w in q.lower().split() if len(w) > 2 and w not in stops]
+        if not kws:
+            return self.df.sample(min(top_k, len(self.df))).to_dict("records")
+        tmp = self.df.copy()
+        tmp["_s"] = tmp["Raw Content"].apply(
+            lambda t: sum(1 for k in kws if k in str(t).lower())
+        )
+        rel = tmp[tmp["_s"] > 0].nlargest(top_k, "_s")
+        if rel.empty:
+            rel = self.df.sample(min(top_k, len(self.df)))
+        return rel.drop(columns=["_s"], errors="ignore").to_dict("records")
 
-        if not keywords:
-            # Fallback: random sample
-            sample = self.df.sample(min(top_k, len(self.df)))
-            return sample.to_dict("records")
-
-        def score(text: str) -> int:
-            text_lower = str(text).lower()
-            return sum(1 for kw in keywords if kw in text_lower)
-
-        scored = self.df.copy()
-        scored["_score"] = scored["Raw Content"].apply(score)
-        relevant = scored[scored["_score"] > 0].nlargest(top_k, "_score")
-
-        if relevant.empty:
-            relevant = self.df.sample(min(top_k, len(self.df)))
-
-        return relevant.drop(columns=["_score"], errors="ignore").to_dict("records")
-
-    def retrieve(self, query: str, top_k: int = 15) -> list[dict]:
-        """Retrieve the most relevant reviews for a query."""
+    def retrieve(self, q, top_k=15):
         if self.has_faiss:
-            return self._retrieve_faiss(query, top_k)
-        return self._retrieve_keyword(query, top_k)
+            return self._faiss_retrieve(q, top_k)
+        return self._keyword_retrieve(q, top_k)
 
-    # ─────────────────── Evidence Formatting ───────────────────
+    # --- Evidence Formatting ---
 
     @staticmethod
-    def _format_evidence(reviews: list[dict]) -> str:
-        """Format retrieved reviews into a numbered evidence block."""
+    def _fmt_evidence(reviews):
         lines = []
         for i, r in enumerate(reviews, 1):
             cat = r.get("Target Category", "N/A")
-            pillar = r.get("Friction Pillar", "N/A")
-            source = r.get("Source", "N/A")
-            text = str(r.get("Raw Content", ""))[:500]
-            lines.append(f"[{i}] Source: {source} | Category: {cat} | Pillar: {pillar}")
-            lines.append(f'    "{text}"')
+            pil = r.get("Friction Pillar", "N/A")
+            src = r.get("Source", "N/A")
+            txt = strip_pii(str(r.get("Raw Content", ""))[:500])
+            lines.append(f"[{i}] Source: {src} | Category: {cat} | Pillar: {pil}")
+            lines.append(f'    "{txt}"')
             lines.append("")
         return "\n".join(lines)
 
-    # ─────────────────── Answer Generation ───────────────────
+    # --- Main Ask ---
 
-    def ask(self, question: str, top_k: int = 15) -> dict:
-        """
-        Answer an evaluator question using RAG.
+    def ask(self, question, top_k=15, brief=False):
+        """Answer with full guardrails."""
 
-        Returns:
-            dict with keys: answer, evidence_count, mode, sources_used
-        """
-        # 1. Retrieve
-        evidence = self.retrieve(question, top_k=top_k)
-        evidence_block = self._format_evidence(evidence)
+        # Safety
+        refusal = self._check_safety(question)
+        if refusal:
+            self.conversation_history.append({"role": "user", "content": question})
+            self.conversation_history.append({"role": "assistant", "content": refusal})
+            return {
+                "answer": refusal,
+                "evidence_count": 0,
+                "mode": "Safety refusal",
+                "sources_used": [],
+                "categories_in_evidence": [],
+                "confidence": {
+                    "level": "n/a", "emoji": "\U0001f6ab",
+                    "description": "Question refused by safety filter",
+                },
+                "thin_warning": None,
+                "contradiction_note": None,
+                "follow_ups": [
+                    "What are the most common frustrations Blinkit users report?",
+                    "Which non-grocery categories have the most quality complaints?",
+                    "What do users say about electronics on Blinkit?",
+                ],
+                "evidence": [],
+                "was_refused": True,
+            }
 
-        # 2. Build stats
-        cat_dist_str = ", ".join(f"{k}: {v}" for k, v in sorted(self._category_dist.items(), key=lambda x: -x[1])[:5])
-        pillar_dist_str = ", ".join(f"{k}: {v}" for k, v in sorted(self._pillar_dist.items(), key=lambda x: -x[1]))
+        # Retrieve
+        ev = self.retrieve(question, top_k=top_k)
 
-        # 3. Generate answer
+        # Hallucination guard
+        if len(ev) < MIN_EVIDENCE:
+            ans = _REFUSAL_DATA.format(n=self._n)
+            self.conversation_history.append({"role": "user", "content": question})
+            self.conversation_history.append({"role": "assistant", "content": ans})
+            return {
+                "answer": ans,
+                "evidence_count": len(ev),
+                "mode": "Insufficient data",
+                "sources_used": [],
+                "categories_in_evidence": [],
+                "confidence": {
+                    "level": "low", "emoji": "\U0001f534",
+                    "description": "Insufficient evidence",
+                },
+                "thin_warning": None,
+                "contradiction_note": None,
+                "follow_ups": [
+                    "What are the top user frustrations with non-grocery categories?"
+                ],
+                "evidence": ev,
+                "was_refused": True,
+            }
+
+        # Metadata
+        ev_block = self._fmt_evidence(ev)
+        conf = self._confidence(ev)
+        tw = self._thin_warning(ev)
+        cn = self._contradictions(ev)
+        fu = self.follow_ups(ev)
+
+        cd = ", ".join(
+            f"{k}: {v}"
+            for k, v in sorted(self._cat_dist.items(), key=lambda x: -x[1])[:5]
+        )
+        pd_str = ", ".join(
+            f"{k}: {v}"
+            for k, v in sorted(self._pil_dist.items(), key=lambda x: -x[1])
+        )
+
+        # Generate
         if self.has_api_key:
-            answer = self._generate_ai(question, evidence_block, cat_dist_str, pillar_dist_str, len(evidence))
+            ans = self._gen_ai(question, ev_block, cd, pd_str, len(ev), brief)
         else:
-            answer = self._generate_offline(question, evidence)
+            ans = self._gen_offline(question, ev)
 
-        # 4. Track conversation
         self.conversation_history.append({"role": "user", "content": question})
-        self.conversation_history.append({"role": "assistant", "content": answer})
+        self.conversation_history.append({"role": "assistant", "content": ans})
+
+        if self.has_api_key and self.has_faiss:
+            mode = "AI (Groq Llama 3.3 + FAISS)"
+        elif self.has_api_key:
+            mode = "AI (Groq Llama 3.3 + keyword)"
+        else:
+            mode = "Offline (keyword retrieval)"
 
         return {
-            "answer": answer,
-            "evidence_count": len(evidence),
-            "mode": "AI (Groq Llama 3.3 + FAISS)" if (self.has_api_key and self.has_faiss)
-                    else "AI (Groq Llama 3.3 + keyword)" if self.has_api_key
-                    else "Offline (keyword retrieval)",
-            "sources_used": list(set(r.get("Source", "") for r in evidence)),
-            "categories_in_evidence": list(set(r.get("Target Category", "") for r in evidence)),
-            "evidence": evidence,
+            "answer": ans,
+            "evidence_count": len(ev),
+            "mode": mode,
+            "sources_used": list({r.get("Source", "") for r in ev}),
+            "categories_in_evidence": list({r.get("Target Category", "") for r in ev}),
+            "confidence": conf,
+            "thin_warning": tw,
+            "contradiction_note": cn,
+            "follow_ups": fu,
+            "evidence": ev,
+            "was_refused": False,
         }
 
-    def _generate_ai(
-        self,
-        question: str,
-        evidence_block: str,
-        cat_dist_str: str,
-        pillar_dist_str: str,
-        num_results: int,
-    ) -> str:
-        """Generate answer using Groq (Llama 3.3 70B) with RAG context."""
+    def _gen_ai(self, question, ev_block, cd, pd_str, n, brief=False):
         from groq import Groq
 
         client = Groq(api_key=config.GROQ_API_KEY)
-
-        user_msg = CONTEXT_TEMPLATE.format(
-            num_results=num_results,
-            evidence_block=evidence_block,
-            category_dist=cat_dist_str,
-            pillar_dist=pillar_dist_str,
-            question=question,
+        extra = (
+            "\n\nIMPORTANT: Keep the answer brief - 2-3 sentences with key evidence only."
+            if brief else ""
         )
+        user_msg = _CTX_TEMPLATE.format(
+            n=n, evidence=ev_block, cat_dist=cd, pil_dist=pd_str, question=question,
+        ) + extra
 
-        # Build messages: system + last 6 conversation turns for continuity + current
-        messages = [{"role": "system", "content": self._system_prompt}]
-
-        # Add recent conversation history (last 3 Q&A pairs = 6 messages)
-        history_window = self.conversation_history[-6:]
-        messages.extend(history_window)
-
-        messages.append({"role": "user", "content": user_msg})
+        msgs = [{"role": "system", "content": self._sys}]
+        msgs.extend(self.conversation_history[-6:])
+        msgs.append({"role": "user", "content": user_msg})
 
         try:
-            response = client.chat.completions.create(
+            resp = client.chat.completions.create(
                 model=config.GROQ_MODEL,
-                messages=messages,
+                messages=msgs,
                 temperature=0.3,
-                max_tokens=1500,
+                max_tokens=800 if brief else 1500,
             )
-            return response.choices[0].message.content
-
+            return resp.choices[0].message.content
         except Exception as e:
-            logger.error("Chatbot AI generation failed: %s", e)
-            return self._generate_offline(question, [])
+            logger.error("AI generation failed: %s", e)
+            return self._gen_offline(question, [])
 
-    def _generate_offline(self, question: str, evidence: list[dict]) -> str:
-        """Generate a structured offline answer from retrieved evidence."""
+    def _gen_offline(self, question, evidence):
         if not evidence:
             return (
-                "I couldn't find relevant evidence in the corpus for this question. "
-                "Try rephrasing, or ensure the FAISS index is built and GROQ_API_KEY is set "
-                "for semantic search and AI-powered answers."
+                "I couldn't find relevant evidence. Try rephrasing, or ensure "
+                "FAISS index is built and GROQ_API_KEY is set."
             )
-
-        # Aggregate stats from evidence
         cats = Counter(r.get("Target Category", "") for r in evidence)
-        pillars = Counter(r.get("Friction Pillar", "") for r in evidence)
-        top_cat = cats.most_common(1)[0][0] if cats else "N/A"
-        top_pillar = pillars.most_common(1)[0][0] if pillars else "N/A"
-
-        # Pick top quotes
+        pils = Counter(r.get("Friction Pillar", "") for r in evidence)
+        tc = cats.most_common(1)[0][0] if cats else "N/A"
+        tp = pils.most_common(1)[0][0] if pils else "N/A"
         quotes = []
         for r in evidence[:5]:
-            text = str(r.get("Raw Content", ""))[:200]
-            source = r.get("Source", "")
+            txt = strip_pii(str(r.get("Raw Content", ""))[:200])
+            src = r.get("Source", "")
             cat = r.get("Target Category", "")
-            if text.strip():
-                quotes.append(f'*"{text}"* — {source}, {cat}')
-
-        quotes_block = "\n".join(f"- {q}" for q in quotes) if quotes else "No quotes available."
-
+            if txt.strip():
+                quotes.append(f'*"{txt}"* - {src}, {cat}')
+        qb = "\n".join(f"- {q}" for q in quotes) if quotes else "No quotes."
         return (
             f"**Based on {len(evidence)} relevant reviews:**\n\n"
-            f"The dominant pattern relates to **{top_pillar}**, primarily in the "
-            f"**{top_cat}** category.\n\n"
-            f"**Category breakdown:** {', '.join(f'{k} ({v})' for k, v in cats.most_common(5))}\n\n"
-            f"**Pillar breakdown:** {', '.join(f'{k} ({v})' for k, v in pillars.most_common())}\n\n"
-            f"**Representative quotes:**\n{quotes_block}\n\n"
-            f"*Note: This is an offline analysis. Set GROQ_API_KEY for AI-powered, "
-            f"nuanced answers with deeper theme extraction.*"
+            f"The dominant pattern relates to **{tp}**, primarily in **{tc}**.\n\n"
+            f"**Category breakdown:** "
+            f"{', '.join(f'{k} ({v})' for k, v in cats.most_common(5))}\n\n"
+            f"**Pillar breakdown:** "
+            f"{', '.join(f'{k} ({v})' for k, v in pils.most_common())}\n\n"
+            f"**Representative quotes:**\n{qb}\n\n"
+            f"*Note: Offline analysis. Set GROQ_API_KEY for AI-powered answers.*"
         )
 
     def clear_history(self):
-        """Reset conversation history."""
         self.conversation_history.clear()
 
+    def export_history(self):
+        if not self.conversation_history:
+            return "No conversation history to export."
+        lines = ["=" * 60, "BLINKIT DISCOVERY ENGINE - CHAT EXPORT", "=" * 60, ""]
+        for i in range(0, len(self.conversation_history), 2):
+            q = self.conversation_history[i] if i < len(self.conversation_history) else None
+            a = (
+                self.conversation_history[i + 1]
+                if i + 1 < len(self.conversation_history) else None
+            )
+            if q:
+                lines.extend([f"USER: {q['content']}", ""])
+            if a:
+                lines.extend([f"ASSISTANT: {a['content']}", "", "-" * 40, ""])
+        lines.extend(["=" * 60, "END OF EXPORT"])
+        return "\n".join(lines)
+
     @property
-    def mode_label(self) -> str:
-        """Human-readable label for the current operating mode."""
+    def mode_label(self):
         if self.has_api_key and self.has_faiss:
             return "Full RAG (FAISS + Groq Llama 3.3 70B)"
-        elif self.has_api_key:
+        if self.has_api_key:
             return "AI + Keyword Retrieval (Groq, no FAISS index)"
-        elif self.has_faiss:
+        if self.has_faiss:
             return "FAISS Retrieval + Offline Generation (no API key)"
-        else:
-            return "Offline Mode (keyword retrieval + rule-based)"
+        return "Offline Mode (keyword retrieval + rule-based)"

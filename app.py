@@ -321,14 +321,9 @@ elif page == "🔎 Search & Explore":
 # ═══════════════════════════════════════════════════════════
 elif page == "💬 RAG Chatbot":
     st.title("💬 RAG Chatbot")
-    st.markdown(
-        "Ask any question about Blinkit's cross-shopping inertia. "
-        "The chatbot retrieves relevant reviews and generates evidence-backed answers."
-    )
 
     # ── Initialise chatbot in session state ──
     if "chatbot" not in st.session_state:
-        # Try loading FAISS index
         faiss_index, faiss_meta = None, None
         try:
             from engine import load_index
@@ -342,15 +337,60 @@ elif page == "💬 RAG Chatbot":
 
     bot = st.session_state.chatbot
 
-    # ── Mode indicator ──
+    # ── Sidebar: Mode, Pipeline Stats, Export, Controls ──
     mode_colors = {
-        "Full RAG": "🟢", "AI + Keyword": "🟡", "FAISS Retrieval": "🟡", "Offline": "🟠"
+        "Full RAG": "\U0001f7e2", "AI + Keyword": "\U0001f7e1",
+        "FAISS Retrieval": "\U0001f7e1", "Offline": "\U0001f7e0",
     }
     mode_key = next((k for k in mode_colors if k in bot.mode_label), "Offline")
     st.sidebar.markdown(f"{mode_colors[mode_key]} **Mode:** {bot.mode_label}")
 
+    st.sidebar.divider()
+    st.sidebar.markdown("**Data Pipeline**")
+    st.sidebar.markdown(f"- Raw: 28,274 reviews")
+    st.sidebar.markdown(f"- Clean: {len(df):,} reviews (93.6% filtered)")
+    st.sidebar.markdown(f"- Categories: {df['Target Category'].nunique()}")
+    st.sidebar.markdown(f"- Sources: {df['Source'].nunique()}")
+
+    brief_mode = st.sidebar.toggle("Brief answers", value=False,
+                                    help="Toggle between brief (2-3 sentences) and detailed responses")
+
+    st.sidebar.divider()
+    if st.session_state.chat_messages:
+        if st.sidebar.button("\U0001f5d1\ufe0f Clear Chat History"):
+            st.session_state.chat_messages.clear()
+            bot.clear_history()
+            st.rerun()
+        export_text = bot.export_history()
+        st.sidebar.download_button(
+            "\U0001f4e5 Export Chat",
+            export_text,
+            file_name="blinkit_chat_export.txt",
+            mime="text/plain",
+        )
+
+    # ── Welcome message (shown when no chat history) ──
+    if not st.session_state.chat_messages:
+        st.markdown("""
+        **\U0001f44b Welcome to the Blinkit Discovery Engine!**
+
+        I analyze **{n:,} user reviews** across **{c} non-grocery categories** to surface
+        friction patterns and user insights.
+
+        **Try asking:**
+        - What are the top frustrations with electronics on Blinkit?
+        - Why don't users explore new categories?
+        - What do users say about beauty product authenticity?
+        - Which friction pillar has the highest impact?
+
+        **\u26a0\ufe0f Limitations:**
+        - I provide **data-backed analysis only** - no buying advice
+        - I **cannot compare platforms** - our dataset is Blinkit-focused
+        - I **cannot make recommendations** - only present user-reported patterns
+        """.format(n=len(df), c=df["Target Category"].nunique()))
+
     # ── Suggested questions ──
-    with st.expander("💡 Suggested questions for evaluators", expanded=False):
+    with st.expander("\U0001f4a1 Suggested questions for evaluators", expanded=False):
         suggestions = [
             "What are the top reasons users don't buy electronics on Blinkit?",
             "How does trust in product authenticity vary across categories?",
@@ -371,10 +411,35 @@ elif page == "💬 RAG Chatbot":
             st.markdown(msg["content"])
             if msg["role"] == "assistant" and msg.get("meta"):
                 meta = msg["meta"]
-                with st.expander(f"📎 Evidence details — {meta['evidence_count']} reviews retrieved", expanded=False):
+                # Confidence badge
+                conf = meta.get("confidence", {})
+                if conf.get("emoji"):
+                    st.caption(f"{conf['emoji']} {conf.get('description', '')}")
+
+                # Thin category warning
+                if meta.get("thin_warning"):
+                    st.warning(meta["thin_warning"])
+
+                # Contradiction note
+                if meta.get("contradiction_note"):
+                    st.info(meta["contradiction_note"])
+
+                # Methodology panel
+                with st.expander(
+                    f"\U0001f4ce Evidence details - {meta['evidence_count']} reviews retrieved",
+                    expanded=False,
+                ):
                     st.markdown(f"**Mode:** {meta['mode']}")
-                    st.markdown(f"**Sources:** {', '.join(meta['sources_used'])}")
-                    st.markdown(f"**Categories:** {', '.join(meta['categories_in_evidence'])}")
+                    st.markdown(f"**Sources:** {', '.join(meta.get('sources_used', []))}")
+                    st.markdown(f"**Categories:** {', '.join(meta.get('categories_in_evidence', []))}")
+                    st.markdown(f"**Retrieval:** {'FAISS semantic search' if bot.has_faiss else 'Keyword overlap'}")
+
+                # Follow-up suggestions
+                if meta.get("follow_ups"):
+                    st.markdown("**Suggested follow-ups:**")
+                    for fu in meta["follow_ups"]:
+                        if st.button(f"\u27a1 {fu}", key=f"fu_{hash(fu)}_{hash(msg['content'][:20])}"):
+                            st.session_state._pending_question = fu
 
     # ── Chat input ──
     pending = st.session_state.pop("_pending_question", None)
@@ -382,22 +447,40 @@ elif page == "💬 RAG Chatbot":
     question = pending or user_input
 
     if question:
-        # Display user message
         st.session_state.chat_messages.append({"role": "user", "content": question})
         with st.chat_message("user"):
             st.markdown(question)
 
-        # Generate answer
         with st.chat_message("assistant"):
-            with st.spinner("Retrieving evidence & generating answer..."):
-                result = bot.ask(question, top_k=15)
+            with st.spinner(f"\U0001f50d Searching {len(df):,} reviews..."):
+                result = bot.ask(question, top_k=15, brief=brief_mode)
 
             st.markdown(result["answer"])
 
-            with st.expander(f"📎 Evidence details — {result['evidence_count']} reviews retrieved", expanded=False):
+            conf = result.get("confidence", {})
+            if conf.get("emoji"):
+                st.caption(f"{conf['emoji']} {conf.get('description', '')}")
+
+            if result.get("thin_warning"):
+                st.warning(result["thin_warning"])
+
+            if result.get("contradiction_note"):
+                st.info(result["contradiction_note"])
+
+            with st.expander(
+                f"\U0001f4ce Evidence details - {result['evidence_count']} reviews retrieved",
+                expanded=False,
+            ):
                 st.markdown(f"**Mode:** {result['mode']}")
-                st.markdown(f"**Sources:** {', '.join(result['sources_used'])}")
-                st.markdown(f"**Categories:** {', '.join(result['categories_in_evidence'])}")
+                st.markdown(f"**Sources:** {', '.join(result.get('sources_used', []))}")
+                st.markdown(f"**Categories:** {', '.join(result.get('categories_in_evidence', []))}")
+                st.markdown(f"**Retrieval:** {'FAISS semantic search' if bot.has_faiss else 'Keyword overlap'}")
+
+            if result.get("follow_ups") and not result.get("was_refused"):
+                st.markdown("**Suggested follow-ups:**")
+                for fu in result["follow_ups"]:
+                    if st.button(f"\u27a1 {fu}", key=f"fu_new_{hash(fu)}"):
+                        st.session_state._pending_question = fu
 
         st.session_state.chat_messages.append({
             "role": "assistant",
@@ -405,17 +488,14 @@ elif page == "💬 RAG Chatbot":
             "meta": {
                 "evidence_count": result["evidence_count"],
                 "mode": result["mode"],
-                "sources_used": result["sources_used"],
-                "categories_in_evidence": result["categories_in_evidence"],
+                "sources_used": result.get("sources_used", []),
+                "categories_in_evidence": result.get("categories_in_evidence", []),
+                "confidence": result.get("confidence", {}),
+                "thin_warning": result.get("thin_warning"),
+                "contradiction_note": result.get("contradiction_note"),
+                "follow_ups": result.get("follow_ups", []),
             },
         })
-
-    # ── Clear chat button ──
-    if st.session_state.chat_messages:
-        if st.sidebar.button("🗑️ Clear Chat History"):
-            st.session_state.chat_messages.clear()
-            bot.clear_history()
-            st.rerun()
 
 
 # ═══════════════════════════════════════════════════════════
