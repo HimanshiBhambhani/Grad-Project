@@ -49,6 +49,23 @@ _EXPANSION_KEYWORDS = re.compile(
     re.IGNORECASE,
 )
 
+# Cross-shopping / inertia keywords — used for curated Reddit threads that were
+# hand-picked for relevance but may not mention a specific product category.
+_CROSS_SHOPPING_KEYWORDS = re.compile(
+    r"\b("
+    r"blinkit|zepto|swiggy\s*instamart|instamart|dunzo|bigbasket|big\s*basket|"
+    r"amazon|flipkart|myntra|nykaa|meesho|jiomart|"
+    r"quick\s*commerce|instant\s*delivery|10.min|minutes|"
+    r"fake|duplicate|counterfeit|original|genuine|authentic|first\s*copy|"
+    r"quality|trust|refund|return|replacement|customer\s*care|support|"
+    r"expensive|overpriced|costly|price|mrp|cheaper|discount|"
+    r"order|deliver|package|cancel|"
+    r"switch|alternative|instead|compare|better|worse|prefer|"
+    r"habit|loyalty|stick\s*to|go\s*back|stopped\s*using|never\s*again"
+    r")\b",
+    re.IGNORECASE,
+)
+
 
 def clean_text(text: str) -> str:
     """Basic text cleanup: strip markdown junk, normalize whitespace."""
@@ -143,6 +160,7 @@ def stage3_category_isolation(df: pd.DataFrame) -> pd.DataFrame:
     def _should_keep(row) -> bool:
         category = str(row.get("category", "")).strip().lower()
         text = str(row.get("text", ""))
+        source = str(row.get("source", "")).lower()
 
         # Explicitly in a KEEP category
         if category in config.KEEP_CATEGORIES:
@@ -157,8 +175,13 @@ def stage3_category_isolation(df: pd.DataFrame) -> pd.DataFrame:
 
         # "general" or unknown → contextual inspection
         if category == config.GENERAL_CATEGORY or category == "":
-            # Keep only if text references expansion-category products
-            return bool(_EXPANSION_KEYWORDS.search(text))
+            # Always keep if text references expansion-category products
+            if _EXPANSION_KEYWORDS.search(text):
+                return True
+            # For curated Reddit data: also keep if cross-shopping relevant
+            if "reddit" in source:
+                return bool(_CROSS_SHOPPING_KEYWORDS.search(text))
+            return False
 
         # Unknown category → try keyword match
         return bool(_EXPANSION_KEYWORDS.search(text))

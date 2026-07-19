@@ -39,7 +39,14 @@ logger = logging.getLogger("main")
 
 def _map_source_labels(df: pd.DataFrame) -> pd.DataFrame:
     """Map raw source labels to output schema labels."""
-    df["Source"] = df["source_raw"].map(config.SOURCE_LABELS).fillna("Historical Dump")
+    df["Source"] = df["source_raw"].map(config.SOURCE_LABELS).fillna("")
+
+    # For Reddit scraped data (source_raw like "reddit_FuckBlinkit"), map to "Reddit"
+    reddit_mask = df["source_raw"].str.startswith("reddit_", na=False) & (df["Source"] == "")
+    df.loc[reddit_mask, "Source"] = "Reddit"
+
+    # Fill any remaining unmapped sources
+    df["Source"] = df["Source"].replace("", "Historical Dump")
 
     # For pre-classified rows, use their original source label if available
     if "_preclassified_source_label" in df.columns:

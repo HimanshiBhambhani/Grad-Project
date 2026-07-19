@@ -183,6 +183,44 @@ def classify_dataframe(df: pd.DataFrame) -> pd.DataFrame:
     return result
 
 
+def _infer_category(text: str) -> str:
+    """Infer target category from text using keyword matching."""
+    import re as _re
+    text_lower = text.lower()
+    category_rules = [
+        ("electronics", _re.compile(
+            r"\b(earbuds|earphones|headphones|charger|cable|phone|laptop|tablet|"
+            r"speaker|smartwatch|watch|power\s*bank|adapter|usb|bluetooth|"
+            r"electronics|gadget|ps5|playstation|gaming|controller|mouse|keyboard)\b",
+            _re.IGNORECASE)),
+        ("personal_care_beauty", _re.compile(
+            r"\b(beauty|skincare|cosmetic|serum|moisturizer|sunscreen|face\s*wash|"
+            r"shampoo|makeup|lipstick|foundation|cream|lotion|perfume|fragrance|"
+            r"hair\s*oil|conditioner|body\s*wash|deodorant|deo)\b",
+            _re.IGNORECASE)),
+        ("pharmacy_health", _re.compile(
+            r"\b(pharmacy|medicine|vitamin|supplement|health|protein|whey|"
+            r"fitness|gym|workout|creatine|bcaa|pre.workout|nutraceutical)\b",
+            _re.IGNORECASE)),
+        ("pet", _re.compile(
+            r"\b(pet|dog|cat|puppy|kitten|pet\s*food|pet\s*care|kibble|"
+            r"treats|litter|leash|collar)\b", _re.IGNORECASE)),
+        ("baby", _re.compile(
+            r"\b(baby|diaper|infant|formula|baby\s*food|stroller|"
+            r"newborn|toddler|wipes)\b", _re.IGNORECASE)),
+        ("home_cleaning", _re.compile(
+            r"\b(cleaning|detergent|dishwash|floor\s*cleaner|mop|"
+            r"fabric\s*softener|toilet\s*cleaner|disinfectant)\b", _re.IGNORECASE)),
+        ("intimate_personal", _re.compile(
+            r"\b(intimate|condom|sanitary|pad|tampon|menstrual|"
+            r"personal\s*hygiene)\b", _re.IGNORECASE)),
+    ]
+    for cat_name, pattern in category_rules:
+        if pattern.search(text):
+            return cat_name
+    return "general"
+
+
 def classify_dataframe_offline(df: pd.DataFrame) -> pd.DataFrame:
     """
     Offline/rule-based classification fallback (no API needed).
@@ -245,6 +283,13 @@ def classify_dataframe_offline(df: pd.DataFrame) -> pd.DataFrame:
 
     df = df.copy()
     df["Target Category"] = df.get("category", "general")
+    # Classify empty categories using keyword matching
+    df["Target Category"] = df.apply(
+        lambda row: _infer_category(str(row.get("text", "")))
+        if str(row.get("Target Category", "")).strip() == ""
+        else row["Target Category"],
+        axis=1,
+    )
     df["Friction Pillar"] = pillars
     df["Opportunity"] = opportunities
 

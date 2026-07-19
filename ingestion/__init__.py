@@ -130,6 +130,37 @@ def load_preclassified_csv() -> pd.DataFrame:
     return result
 
 
+def load_reddit_scraped_csv() -> pd.DataFrame:
+    """
+    Load the browser-scraped Reddit data (Output/reddit_scraped.csv).
+    Columns: source_raw, date, rating, text, url, type
+    """
+    csv_path = config.PROJECT_ROOT / "Output" / "reddit_scraped.csv"
+    if not csv_path.exists():
+        logger.info("Reddit scraped CSV not found at %s — skipping.", csv_path)
+        return pd.DataFrame()
+
+    df = pd.read_csv(csv_path, dtype=str)
+    df.columns = df.columns.str.strip()
+
+    if "text" not in df.columns:
+        logger.warning("Reddit scraped CSV missing 'text' column.")
+        return pd.DataFrame()
+
+    # Normalize columns to match pipeline expectations
+    df["text"] = df["text"].fillna("").str.strip()
+    df = df[df["text"].str.len() > 10]  # drop very short/empty
+
+    # Map source_raw to canonical source label
+    df["source_raw"] = df.get("source_raw", pd.Series(["Reddit"] * len(df))).fillna("Reddit")
+    df["source"] = "Reddit"
+    df["category"] = ""  # will be classified downstream
+    df["rating"] = pd.to_numeric(df.get("rating", None), errors="coerce")
+
+    logger.info("Loaded %d rows from Reddit scraped CSV.", len(df))
+    return df
+
+
 def load_all_historical() -> pd.DataFrame:
     """
     Load and combine all historical data sources into a single DataFrame.
@@ -147,6 +178,11 @@ def load_all_historical() -> pd.DataFrame:
     pre_df = load_preclassified_csv()
     if not pre_df.empty:
         dfs.append(pre_df)
+
+    # Load browser-scraped Reddit data
+    reddit_df = load_reddit_scraped_csv()
+    if not reddit_df.empty:
+        dfs.append(reddit_df)
 
     if not dfs:
         logger.error("No historical data files found!")

@@ -177,16 +177,16 @@ OUTPUT_COLUMNS = [
 
 PLATFORM = "Blinkit"
 
-# Source label mapping
+# Source label mapping — preserve actual platform names
 SOURCE_LABELS = {
-    "Play Store": "Play Store Historical Dump",
-    "App Store": "Play Store Historical Dump",
-    "Reddit (post)": "Reddit Historical Dump",
-    "Reddit (comment)": "Reddit Historical Dump",
-    "HackerNews": "Play Store Historical Dump",
-    "YouTube": "Play Store Historical Dump",
-    "PissedConsumer": "Play Store Historical Dump",
-    "play_store_live": "Play Store Live Stream",
-    "appstore_live": "App Store Live Stream",
-    "reddit_live": "Reddit Link",
+    "Play Store": "Play Store",
+    "App Store": "App Store",
+    "Reddit (post)": "Reddit",
+    "Reddit (comment)": "Reddit",
+    "HackerNews": "HackerNews",
+    "YouTube": "YouTube",
+    "PissedConsumer": "PissedConsumer",
+    "play_store_live": "Play Store (Live)",
+    "appstore_live": "App Store (Live)",
+    "reddit_live": "Reddit (Live)",
 }
