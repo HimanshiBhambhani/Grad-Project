@@ -26,3 +26,4 @@ Output/blinkit_clean_data.parquet
 # Temp files
 _write_urls.py
 *.tmp
+Output/

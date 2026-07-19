@@ -9,7 +9,7 @@ Usage:
     python main.py                          # Historical data only (no API keys needed)
     python main.py --live                   # Include live Play Store scraping
     python main.py --live --reddit          # Include live Reddit scraping
-    python main.py --classify ai            # Use OpenAI for classification
+    python main.py --classify ai            # Use Groq (Llama 3.3) for classification
     python main.py --classify offline       # Use rule-based classification (default)
     python main.py --max-playstore 200      # Limit Play Store scrape count
 """
@@ -80,7 +80,7 @@ def run_pipeline(
         include_live_playstore: Whether to scrape live Play Store reviews
         include_live_appstore: Whether to scrape live App Store reviews
         include_live_reddit: Whether to scrape live Reddit threads
-        classify_mode: 'ai' for OpenAI classification, 'offline' for rule-based
+        classify_mode: 'ai' for Groq classification, 'offline' for rule-based
         max_playstore: Max Play Store reviews to scrape
         max_appstore: Max App Store reviews to scrape
 
@@ -238,7 +238,7 @@ def main():
     )
     parser.add_argument(
         "--classify", choices=["ai", "offline"], default="offline",
-        help="Classification mode: 'ai' (OpenAI) or 'offline' (rule-based, default)"
+        help="Classification mode: 'ai' (Groq LLM) or 'offline' (rule-based, default)"
     )
     parser.add_argument(
         "--max-playstore", type=int, default=500,

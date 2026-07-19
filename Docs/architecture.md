@@ -22,9 +22,9 @@ The Blinkit Discovery Engine is an end-to-end data pipeline that ingests multi-c
 
 - **Dual-pathway ingestion** — live scrapers + historical/curated dumps converge into a single normalised DataFrame
 - **Deterministic cleaning** — three sequential filter stages with no probabilistic heuristics; every drop is auditable
-- **Pluggable classification** — offline regex rules (zero cost) or OpenAI GPT-4o-mini (higher accuracy), selectable at runtime
+- **Pluggable classification** — offline regex rules (zero cost) or Groq Llama 3.3 70B (Groq) (higher accuracy), selectable at runtime
 - **Semantic retrieval** — FAISS vector index enables natural-language querying over the cleaned corpus
-- **Offline-first** — the entire pipeline runs without an API key; AI features activate only when `OPENAI_API_KEY` is present
+- **Offline-first** — the entire pipeline runs without an API key; AI features activate only when `GROQ_API_KEY` is present
 
 ---
 
@@ -82,7 +82,7 @@ The Blinkit Discovery Engine is an end-to-end data pipeline that ingests multi-c
                 │  ┌──────────────┐ ┌───────────────┐  │
                 │  │ FAISS Vector │ │ AI Insight    │  │
                 │  │ Index        │ │ Generator     │  │
-                │  │ (cosine sim) │ │ (GPT-4o-mini) │  │
+                │  │ (cosine sim) │ │ (Llama 3.3 70B (Groq)) │  │
                 │  └──────────────┘ └───────────────┘  │
                 └──────────────────┬──────────────────┘
                                    │
@@ -112,12 +112,12 @@ config.py  ◄──────────────────────
     │
     ├──► pipeline/
     │       ├── filters.py               3-stage deterministic filters
-    │       └── classifier.py            offline regex │ GPT-4o-mini
+    │       └── classifier.py            offline regex │ Llama 3.3 70B (Groq)
     │
     ├──► engine/
     │       ├── __init__.py              FAISS index (faiss-cpu)
     │       ├── themes.py                regex theme detection
-    │       └── insights.py              GPT-4o-mini structured insights
+    │       └── insights.py              Llama 3.3 70B (Groq) structured insights
     │
     ├──► main.py                         CLI orchestrator
     ├──► scrape_reviews.py               standalone weekly scraper
@@ -295,9 +295,9 @@ The pipeline is implemented as three composable, stateless filter functions. Eac
                             │
               ┌─────────────▼─────────────┐
               │   --classify ai            │
-              │   (requires OPENAI_API_KEY)│
+              │   (requires GROQ_API_KEY)│
               │                            │
-              │   GPT-4o-mini structured   │
+              │   Llama 3.3 70B (Groq) structured   │
               │   JSON, temperature=0.1    │
               │   + Opportunity field      │
               │   Rate limit: 1s / 20 rows │
@@ -338,7 +338,7 @@ Each review is scored against all 10 patterns; primary theme = highest match cou
 ┌──────────────────────────────────────────────────────────┐
 │                   FAISS INDEX                             │
 │                                                          │
-│  Embedding model:  text-embedding-3-small (1,536 dims)   │
+│  Embedding model:  all-MiniLM-L6-v2 (local) (384 dims)   │
 │  Index type:       IndexFlatIP (cosine via L2-norm)      │
 │  Corpus size:      1,808 vectors                         │
 │  Persistence:      Output/faiss_index.bin                │
@@ -348,7 +348,7 @@ Each review is scored against all 10 patterns; primary theme = highest match cou
 │    "Why don't users buy electronics on Blinkit?"         │
 │         │                                                │
 │         ▼                                                │
-│    embed(query) → 1,536-dim vector                       │
+│    embed(query) → 384-dim vector                       │
 │         │                                                │
 │         ▼                                                │
 │    IndexFlatIP.search(vec, k=15)                         │
@@ -367,7 +367,7 @@ Each review is scored against all 10 patterns; primary theme = highest match cou
 │  Input:   one of 8 strategic questions                      │
 │           + 15–20 relevant reviews (keyword or FAISS)       │
 │                                                             │
-│  Model:   GPT-4o-mini, temperature=0.3                      │
+│  Model:   Llama 3.3 70B (Groq), temperature=0.3                      │
 │  Format:  structured JSON                                   │
 │                                                             │
 │  Output:                                                    │
@@ -433,7 +433,7 @@ Each review is scored against all 10 patterns; primary theme = highest match cou
 │                                                         │
 │  Tab 5: 💬 RAG Chatbot                                  │
 │    • Free-form conversational Q&A interface             │
-│    • FAISS semantic retrieval + GPT-4o-mini generation  │
+│    • FAISS semantic retrieval + Llama 3.3 70B (Groq) generation  │
 │    • Multi-turn conversation memory (last 3 turns)      │
 │    • 8 suggested evaluator questions                    │
 │    • Expandable evidence panels per answer              │
@@ -471,7 +471,7 @@ Each review is scored against all 10 patterns; primary theme = highest match cou
 │  ┌───────────────────▼─────────────────────────┐          │
 │  │  GENERATION LAYER                            │          │
 │  │  ┌──────────────┐    ┌───────────────────┐   │          │
-│  │  │ GPT-4o-mini  │ OR │ Offline Template  │   │          │
+│  │  │ Llama 3.3 70B (Groq)  │ OR │ Offline Template  │   │          │
 │  │  │ (temp=0.3)   │    │ (rule-based)      │   │          │
 │  │  └──────────────┘    └───────────────────┘   │          │
 │  └───────────────────┬─────────────────────────┘          │
@@ -482,8 +482,8 @@ Each review is scored against all 10 patterns; primary theme = highest match cou
 └───────────────────────────────────────────────────────────┘
 
 4 Operating Modes:
-  🟢 Full RAG        = FAISS + GPT-4o-mini
-  🟡 AI + Keyword    = keyword retrieval + GPT-4o-mini
+  🟢 Full RAG        = FAISS + Llama 3.3 70B (Groq)
+  🟡 AI + Keyword    = keyword retrieval + Llama 3.3 70B (Groq)
   🟡 FAISS + Offline = FAISS + rule-based generation
   🟠 Offline         = keyword retrieval + rule-based
 ```
@@ -499,10 +499,10 @@ app.py
   │     └── assigns themes to every row (regex, no API)
   │
   ├── engine/__init__.py
-  │     └── builds/loads FAISS index (requires OPENAI_API_KEY)
+  │     └── builds/loads FAISS index (requires GROQ_API_KEY)
   │
   ├── engine/insights.py
-  │     └── generates strategic answers (requires OPENAI_API_KEY)
+  │     └── generates strategic answers (requires GROQ_API_KEY)
   │     └── offline fallback: rule-based pillar/category aggregation
   │
   └── engine/chatbot.py
@@ -568,8 +568,8 @@ python scrape_reviews.py --appstore-only
 | **Play Store scraping** | google-play-scraper | Live review extraction |
 | **App Store scraping** | app-store-scraper | Live review extraction |
 | **Reddit scraping** | PRAW | Thread/comment extraction |
-| **Embeddings** | OpenAI text-embedding-3-small | 1,536-dim vectors for FAISS |
-| **LLM** | OpenAI GPT-4o-mini | Classification + insight generation |
+| **Embeddings** | Local all-MiniLM-L6-v2 (local) | 384-dim vectors for FAISS |
+| **LLM** | Groq Llama 3.3 70B (Groq) | Classification + insight generation |
 | **Vector search** | faiss-cpu | Cosine similarity search |
 | **Dashboard** | Streamlit | Interactive 5-tab UI |
 | **CI/CD** | GitHub Actions | Weekly automated scraping |
@@ -583,7 +583,7 @@ python scrape_reviews.py --appstore-only
 |---------|----------|
 | **API keys** | Stored in `.env` (gitignored); GitHub Actions uses repo secrets |
 | **Reddit credentials** | `REDDIT_CLIENT_ID`, `REDDIT_CLIENT_SECRET`, `REDDIT_USER_AGENT` in `.env` |
-| **OpenAI key** | `OPENAI_API_KEY` in `.env`; all AI features degrade gracefully without it |
+| **Groq key** | `GROQ_API_KEY` in `.env`; all AI features degrade gracefully without it |
 | **Output data** | `Output/` CSVs are gitignored (except `scrapes/` for cumulative tracking) |
 | **Rate limiting** | Classifier pauses 1s every 20 rows; scrapers respect API limits |
 | **Region lock** | All scraping constrained to `country='in'`, `lang='en'` |
@@ -595,8 +595,8 @@ python scrape_reviews.py --appstore-only
 | Dimension | Current | Path to Scale |
 |-----------|---------|---------------|
 | **Corpus size** | 1,808 clean rows | FAISS `IndexIVFFlat` for >100K vectors |
-| **Embedding model** | text-embedding-3-small | Upgrade to text-embedding-3-large for higher recall |
-| **Classification** | Sequential GPT-4o-mini calls | Batch API or fine-tuned classifier |
+| **Embedding model** | all-MiniLM-L6-v2 (local) | Upgrade to all-MiniLM-L6-v2 (local)-large for higher recall |
+| **Classification** | Sequential Llama 3.3 70B (Groq) calls | Batch API or fine-tuned classifier |
 | **Storage** | Local CSV files | PostgreSQL / BigQuery for production |
 | **Dashboard** | Single-user Streamlit | Streamlit Cloud or containerised deployment |
 | **Scraping frequency** | Weekly cron | Daily with backoff; add more store regions |

@@ -128,7 +128,7 @@
 | Scenario | Risk | Mitigation |
 |----------|------|------------|
 | `GOOGLE_API_KEY` missing or invalid | Embedding call fails → no FAISS index built | Graceful degradation: dashboard falls back to keyword search; show user warning |
-| Gemini embedding quota exhausted | `429 RESOURCE_EXHAUSTED` during batch embedding | Implement retry with exponential backoff; save partial index; resume from checkpoint |
+| Embedding quota exhausted (N/A with local model) | `429 RESOURCE_EXHAUSTED` during batch embedding | Implement retry with exponential backoff; save partial index; resume from checkpoint |
 | Embedding API returns different dimensions than expected | FAISS index dimension mismatch → `RuntimeError` | Detect dimension from first batch; build index dynamically rather than hardcoding |
 | Review text is empty string after cleaning | Zero-length text produces meaningless embedding | Filter out empty/whitespace-only texts before embedding |
 | Very long review text (>8,000 chars) | Exceeds embedding model token limit | Truncate to 8,000 chars (already implemented) |
@@ -263,7 +263,7 @@
 | Network timeout / intermittent connectivity | Random API failures across batch | Retry up to 3 times with exponential backoff; fall back to offline for persistent failures |
 | API key revoked / billing issues | All AI features fail | Validate key at startup; clear error message; automatic offline fallback |
 
-### 8.2 Gemini API (Embeddings)
+### 8.2 Local Embeddings (sentence-transformers)
 
 | Scenario | Risk | Mitigation |
 |----------|------|------------|
@@ -323,7 +323,7 @@
 | 0.1 | Clone repo: `git clone git@github-personal:HimanshiBhambhani/Grad-Project.git` | `ls` shows project structure |
 | 0.2 | Install Python dependencies: `pip install -r requirements.txt` | `python -c "import pandas, streamlit, groq, faiss"` succeeds |
 | 0.3 | Create `.env` with `GROQ_API_KEY` and `GOOGLE_API_KEY` | `python -c "from dotenv import load_dotenv; load_dotenv(); import config; print(config.GROQ_API_KEY[:8])"` prints key prefix |
-| 0.4 | Verify API keys work | Run test: Groq responds, Gemini embedding returns 3072 dims |
+| 0.4 | Verify API keys work | Run test: Groq responds, local embedding returns 384 dims |
 | 0.5 | Verify data files exist in `Data/` | `ls Data/` shows both CSVs, Reddit URLs, pre-classified CSV |
 
 **Exit criteria:** All imports succeed, both API keys validated, data files present.
@@ -418,7 +418,7 @@
 | Step | Action | Verification |
 |------|--------|--------------|
 | 5.1 | Build FAISS index: `python -c "from engine import build_index; import pandas as pd; build_index(pd.read_csv('Output/blinkit_clean_data.csv'))"` | Files created: `Output/faiss_index.bin`, `Output/faiss_meta.pkl` |
-| 5.2 | Verify index dimensions | Should be 3,072 (Gemini embedding-001 dimension) |
+| 5.2 | Verify index dimensions | Should be 384 (all-MiniLM-L6-v2 dimension) |
 | 5.3 | Test search: query "fake electronics" | Returns relevant reviews about counterfeit products |
 | 5.4 | Test search: query "beauty product storage" | Returns relevant reviews about skincare/dark store |
 | 5.5 | Verify metadata count matches index vectors | `index.ntotal == len(metadata)` |
@@ -499,7 +499,7 @@
 
 | Step | Action | Verification |
 |------|--------|--------------|
-| 9.1 | Update all doc files to reflect current LLM provider (Groq + Gemini) | Grep for "OpenAI" / "GPT-4o-mini" → replace with actual providers |
+| 9.1 | Update all doc files to reflect current LLM provider (Groq + local sentence-transformers) | Grep for "OpenAI" / "Llama 3.3 70B (Groq)" → replace with actual providers |
 | 9.2 | Run full pipeline end-to-end one final time | Clean output matches expected counts |
 | 9.3 | Verify all edge case mitigations from this document are implemented | Cross-reference each section |
 | 9.4 | Push all changes to GitHub | `git push` succeeds |

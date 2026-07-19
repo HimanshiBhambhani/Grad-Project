@@ -110,4 +110,4 @@ The engine must export the consolidated, clean data rows exclusively as a struct
 ---
 
 ## Execution Directives for the Developer Agent
-Using the above instructions, build or optimize a cohesive data parsing implementation. Ensure data structures are fully prepared to pass text arrays smoothly downstream into our local-memory FAISS vector indexing logic (`text-embedding-3-small`) and serve our active Streamlit runtime layout tabs. Do not truncate datasets or drop rows that clear the ingestion filters.
+Using the above instructions, build or optimize a cohesive data parsing implementation. Ensure data structures are fully prepared to pass text arrays smoothly downstream into our local-memory FAISS vector indexing logic (`all-MiniLM-L6-v2` (local sentence-transformers)) and serve our active Streamlit runtime layout tabs. Do not truncate datasets or drop rows that clear the ingestion filters.

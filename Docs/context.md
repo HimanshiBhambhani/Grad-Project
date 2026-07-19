@@ -129,7 +129,7 @@ The engine exports a structured table / Pandas DataFrame with this schema:
 
 The output data is designed to integrate with:
 
-- **FAISS vector index** using `text-embedding-3-small` for local-memory semantic search
+- **FAISS vector index** using `all-MiniLM-L6-v2 (local)` for local-memory semantic search
 - **Streamlit runtime** for interactive dashboard tabs and exploration
 
 No rows that clear the ingestion filters should be truncated or dropped.

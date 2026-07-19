@@ -52,7 +52,7 @@
 │  ┌──────────────────────┐    ┌──────────────────────────────────┐    │
 │  │ Friction Pillar       │    │ Theme Pattern Matching            │    │
 │  │ (4 pillars — offline  │    │ (10 themes — regex keyword        │    │
-│  │  or GPT-4o-mini)      │    │  detection with confidence)       │    │
+│  │  or Llama 3.3 70B (Groq))      │    │  detection with confidence)       │    │
 │  └──────────────────────┘    └──────────────────────────────────┘    │
 └──────────────────────────────────────────────────────────────────────┘
                                 │
@@ -61,7 +61,7 @@
 │                    DISCOVERY ENGINE                                   │
 │  ┌──────────────────────┐    ┌──────────────────────────────────┐    │
 │  │ FAISS Vector Index    │    │ AI Insight Generator              │    │
-│  │ (text-embedding-3-    │    │ (GPT-4o-mini structured JSON      │    │
+│  │ (all-MiniLM-L6-v2 (local)-    │    │ (Llama 3.3 70B (Groq) structured JSON      │    │
 │  │  small, cosine sim)   │    │  + offline rule-based fallback)   │    │
 │  └──────────────────────┘    └──────────────────────────────────┘    │
 └──────────────────────────────────────────────────────────────────────┘
@@ -256,11 +256,11 @@ Each surviving row is assigned to exactly one of **4 friction pillars**:
 - Runs instantly, no API cost
 
 **AI-powered (`--classify ai`):**
-- OpenAI GPT-4o-mini with structured JSON output
+- Groq Llama 3.3 70B (Groq) with structured JSON output
 - System prompt defines all 4 pillars with detailed descriptions
 - Also generates `Target Category` validation and `Opportunity` hypothesis
 - Rate-limited: 1-second pause every 20 rows
-- Requires `OPENAI_API_KEY` in `.env`
+- Requires `GROQ_API_KEY` in `.env`
 
 ### 5.3 Output Schema
 
@@ -311,7 +311,7 @@ Each surviving row is assigned to exactly one of **4 friction pillars**:
 
 **File:** `engine/__init__.py`
 
-- Embeds all 1,808 reviews using `text-embedding-3-small` (1,536 dimensions)
+- Embeds all 1,808 reviews using `all-MiniLM-L6-v2 (local)` (384 dimensions)
 - Builds `IndexFlatIP` (inner product after L2 normalization = cosine similarity)
 - Persists to `Output/faiss_index.bin` + `Output/faiss_meta.pkl`
 - Semantic search: natural language query → top-K most relevant reviews
@@ -333,7 +333,7 @@ Answers the 8 strategic questions:
 
 **Process per question:**
 1. Retrieve 15-20 most relevant reviews (keyword relevance or FAISS semantic search)
-2. Feed evidence to GPT-4o-mini with structured system prompt
+2. Feed evidence to Llama 3.3 70B (Groq) with structured system prompt
 3. Output: executive summary, 3-6 grounded themes with verbatim quotes, key non-obvious insight, 3 actionable recommendations, confidence level, evidence gaps
 
 **Offline fallback:** Rule-based aggregation of pillar/category distributions with template-based recommendations.
@@ -368,7 +368,7 @@ An interactive conversational interface designed for evaluator Q&A sessions. The
            │
            ▼
     ┌──────────────┐       ┌──────────────────┐
-    │  Generation   │──────►│ GPT-4o-mini      │  (if API key present)
+    │  Generation   │──────►│ Llama 3.3 70B (Groq)      │  (if API key present)
     │  Layer        │──────►│ Offline Template │  (rule-based fallback)
     └──────┬───────┘       └──────────────────┘
            │
@@ -382,10 +382,10 @@ An interactive conversational interface designed for evaluator Q&A sessions. The
 
 The chatbot degrades gracefully depending on available infrastructure:
 
-| Mode | FAISS Index | OpenAI Key | Retrieval | Generation |
+| Mode | FAISS Index | Groq Key | Retrieval | Generation |
 |------|-------------|------------|-----------|------------|
-| **Full RAG** | ✅ | ✅ | Semantic (cosine similarity) | GPT-4o-mini |
-| **AI + Keyword** | ❌ | ✅ | Keyword overlap scoring | GPT-4o-mini |
+| **Full RAG** | ✅ | ✅ | Semantic (cosine similarity) | Llama 3.3 70B (Groq) |
+| **AI + Keyword** | ❌ | ✅ | Keyword overlap scoring | Llama 3.3 70B (Groq) |
 | **FAISS + Offline** | ✅ | ❌ | Semantic search | Rule-based template |
 | **Offline** | ❌ | ❌ | Keyword overlap scoring | Rule-based template |
 
@@ -507,7 +507,7 @@ python main.py --appstore                # App Store only
 
 ```bash
 # Set API key
-echo "OPENAI_API_KEY=sk-..." > .env
+echo "GROQ_API_KEY=sk-..." > .env
 
 # Run with AI classifier
 python main.py --classify ai
@@ -544,6 +544,6 @@ python scrape_reviews.py --max-reviews 200
 ### What could improve accuracy
 
 - Run `--classify ai` for more nuanced pillar distribution
-- Build FAISS index (`OPENAI_API_KEY` required) for semantic search in the Strategic Questions tab
+- Build FAISS index (`GROQ_API_KEY` required) for semantic search in the Strategic Questions tab
 - Add more Reddit thread URLs to `Data/Reddit Data URLs` for broader coverage
 - Collect more non-`general` category reviews to reduce the `general` dominance (59.9%)

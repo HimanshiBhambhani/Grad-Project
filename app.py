@@ -8,8 +8,17 @@ Usage:
     streamlit run app.py
 """
 
+import os
 import sys
 from pathlib import Path
+
+# ── SSL & HF fixes (must run before any HuggingFace / model imports) ──
+try:
+    import truststore
+    truststore.inject_into_ssl()
+except ImportError:
+    pass
+os.environ.setdefault("HF_HUB_DISABLE_XET", "1")
 
 import pandas as pd
 import streamlit as st
@@ -122,7 +131,7 @@ if page == "📊 Dashboard Overview":
         ],
         "Rows": [56530, 28274, 27589, 26680, 1808, len(df)],
     }
-    st.dataframe(pd.DataFrame(funnel_data), use_container_width=True, hide_index=True)
+    st.dataframe(pd.DataFrame(funnel_data), width='stretch', hide_index=True)
 
 
 # ═══════════════════════════════════════════════════════════
@@ -171,7 +180,7 @@ elif page == "🔬 Theme Explorer":
         matrix_data.append(row)
 
     matrix_df = pd.DataFrame(matrix_data).set_index("Category")
-    st.dataframe(matrix_df, use_container_width=True)
+    st.dataframe(matrix_df, width='stretch')
 
 
 # ═══════════════════════════════════════════════════════════
@@ -184,7 +193,7 @@ elif page == "❓ Strategic Questions":
     selected_q = st.selectbox("Select a strategic question:", STRATEGIC_QUESTIONS)
 
     # Filter method
-    filter_method = st.radio("Analysis method:", ["Keyword Relevance (offline)", "Semantic Search (requires FAISS + OpenAI)"], horizontal=True)
+    filter_method = st.radio("Analysis method:", ["Keyword Relevance (offline)", "Semantic Search (requires FAISS + API keys)"], horizontal=True)
 
     if st.button("Generate Insight", type="primary"):
         with st.spinner("Analyzing evidence..."):
@@ -220,7 +229,7 @@ elif page == "❓ Strategic Questions":
                         st.stop()
                     reviews_list = search(selected_q, index, metadata, top_k=20)
 
-                    if config.OPENAI_API_KEY:
+                    if config.GROQ_API_KEY:
                         from engine.insights import generate_insight
                         insight = generate_insight(selected_q, reviews_list)
                     else:
@@ -295,7 +304,7 @@ elif page == "🔎 Search & Explore":
     display_cols = ["Target Category", "Friction Pillar", "Primary Theme", "Raw Content", "Source"]
     st.dataframe(
         filtered[display_cols].head(100),
-        use_container_width=True,
+        width='stretch',
         hide_index=True,
         column_config={
             "Raw Content": st.column_config.TextColumn("Review", width="large"),
@@ -353,7 +362,7 @@ elif page == "💬 RAG Chatbot":
             "How does the grocery habit lock-in manifest in user reviews?",
         ]
         for s in suggestions:
-            if st.button(s, key=f"suggest_{hash(s)}", use_container_width=True):
+            if st.button(s, key=f"suggest_{hash(s)}", width='stretch'):
                 st.session_state._pending_question = s
 
     # ── Chat history display ──
@@ -438,10 +447,10 @@ elif page == "✅ Validation & Methodology":
        - Each review matched against all patterns; highest-match theme assigned
        - Themes: Counterfeit/Fake Products, Warranty Anxiety, Dark Store Concerns, Price Premium, Category Unawareness, Search Friction, Grocery Habit Lock, Support Failures, Quality Issues, Trust/Verification
 
-    2. **AI-Powered Semantic Clustering** (with OpenAI):
-       - Reviews embedded via `text-embedding-3-small`
+    2. **AI-Powered Semantic Clustering** (with Groq + local embeddings):
+       - Reviews embedded via `all-MiniLM-L6-v2` sentence-transformers model (384 dims, local)
        - FAISS index enables semantic search for any natural language query
-       - GPT-4o-mini generates structured theme analysis grounded in retrieved evidence
+       - Groq Llama 3.3 70B generates structured theme analysis grounded in retrieved evidence
     """)
 
     st.subheader("3. How Insights Are Generated")
