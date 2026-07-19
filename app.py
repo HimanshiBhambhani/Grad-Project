@@ -18,6 +18,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import config
 from engine.themes import identify_themes, get_theme_summary, get_cross_theme_patterns
 from engine.insights import STRATEGIC_QUESTIONS, generate_insight_offline
+from engine.chatbot import RAGChatbot
 
 # ─────────────────── Page Config ───────────────────
 st.set_page_config(
@@ -57,6 +58,7 @@ page = st.sidebar.radio(
         "🔬 Theme Explorer",
         "❓ Strategic Questions",
         "🔎 Search & Explore",
+        "💬 RAG Chatbot",
         "✅ Validation & Methodology",
     ],
 )
@@ -306,7 +308,109 @@ elif page == "🔎 Search & Explore":
 
 
 # ═══════════════════════════════════════════════════════════
-# PAGE 5: VALIDATION & METHODOLOGY
+# PAGE 5: RAG CHATBOT
+# ═══════════════════════════════════════════════════════════
+elif page == "💬 RAG Chatbot":
+    st.title("💬 RAG Chatbot")
+    st.markdown(
+        "Ask any question about Blinkit's cross-shopping inertia. "
+        "The chatbot retrieves relevant reviews and generates evidence-backed answers."
+    )
+
+    # ── Initialise chatbot in session state ──
+    if "chatbot" not in st.session_state:
+        # Try loading FAISS index
+        faiss_index, faiss_meta = None, None
+        try:
+            from engine import load_index
+            faiss_index, faiss_meta = load_index()
+        except Exception:
+            pass
+        st.session_state.chatbot = RAGChatbot(df, faiss_index, faiss_meta)
+
+    if "chat_messages" not in st.session_state:
+        st.session_state.chat_messages = []
+
+    bot = st.session_state.chatbot
+
+    # ── Mode indicator ──
+    mode_colors = {
+        "Full RAG": "🟢", "AI + Keyword": "🟡", "FAISS Retrieval": "🟡", "Offline": "🟠"
+    }
+    mode_key = next((k for k in mode_colors if k in bot.mode_label), "Offline")
+    st.sidebar.markdown(f"{mode_colors[mode_key]} **Mode:** {bot.mode_label}")
+
+    # ── Suggested questions ──
+    with st.expander("💡 Suggested questions for evaluators", expanded=False):
+        suggestions = [
+            "What are the top reasons users don't buy electronics on Blinkit?",
+            "How does trust in product authenticity vary across categories?",
+            "What evidence exists that users are unaware of non-grocery categories?",
+            "How do users compare Blinkit's prices to Amazon and Nykaa?",
+            "What are the biggest quality concerns for beauty/skincare products?",
+            "Which friction pillar has the highest impact on cross-shopping?",
+            "What do pet care buyers complain about most?",
+            "How does the grocery habit lock-in manifest in user reviews?",
+        ]
+        for s in suggestions:
+            if st.button(s, key=f"suggest_{hash(s)}", use_container_width=True):
+                st.session_state._pending_question = s
+
+    # ── Chat history display ──
+    for msg in st.session_state.chat_messages:
+        with st.chat_message(msg["role"]):
+            st.markdown(msg["content"])
+            if msg["role"] == "assistant" and msg.get("meta"):
+                meta = msg["meta"]
+                with st.expander(f"📎 Evidence details — {meta['evidence_count']} reviews retrieved", expanded=False):
+                    st.markdown(f"**Mode:** {meta['mode']}")
+                    st.markdown(f"**Sources:** {', '.join(meta['sources_used'])}")
+                    st.markdown(f"**Categories:** {', '.join(meta['categories_in_evidence'])}")
+
+    # ── Chat input ──
+    pending = st.session_state.pop("_pending_question", None)
+    user_input = st.chat_input("Ask a question about Blinkit's cross-shopping data...")
+    question = pending or user_input
+
+    if question:
+        # Display user message
+        st.session_state.chat_messages.append({"role": "user", "content": question})
+        with st.chat_message("user"):
+            st.markdown(question)
+
+        # Generate answer
+        with st.chat_message("assistant"):
+            with st.spinner("Retrieving evidence & generating answer..."):
+                result = bot.ask(question, top_k=15)
+
+            st.markdown(result["answer"])
+
+            with st.expander(f"📎 Evidence details — {result['evidence_count']} reviews retrieved", expanded=False):
+                st.markdown(f"**Mode:** {result['mode']}")
+                st.markdown(f"**Sources:** {', '.join(result['sources_used'])}")
+                st.markdown(f"**Categories:** {', '.join(result['categories_in_evidence'])}")
+
+        st.session_state.chat_messages.append({
+            "role": "assistant",
+            "content": result["answer"],
+            "meta": {
+                "evidence_count": result["evidence_count"],
+                "mode": result["mode"],
+                "sources_used": result["sources_used"],
+                "categories_in_evidence": result["categories_in_evidence"],
+            },
+        })
+
+    # ── Clear chat button ──
+    if st.session_state.chat_messages:
+        if st.sidebar.button("🗑️ Clear Chat History"):
+            st.session_state.chat_messages.clear()
+            bot.clear_history()
+            st.rerun()
+
+
+# ═══════════════════════════════════════════════════════════
+# PAGE 6: VALIDATION & METHODOLOGY
 # ═══════════════════════════════════════════════════════════
 elif page == "✅ Validation & Methodology":
     st.title("✅ Validation & Methodology")

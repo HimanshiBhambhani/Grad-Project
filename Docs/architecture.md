@@ -431,7 +431,15 @@ Each review is scored against all 10 patterns; primary theme = highest match cou
 │    • Keyword search                                     │
 │    • Browse + download filtered data                    │
 │                                                         │
-│  Tab 5: ✅ Validation & Methodology                     │
+│  Tab 5: 💬 RAG Chatbot                                  │
+│    • Free-form conversational Q&A interface             │
+│    • FAISS semantic retrieval + GPT-4o-mini generation  │
+│    • Multi-turn conversation memory (last 3 turns)      │
+│    • 8 suggested evaluator questions                    │
+│    • Expandable evidence panels per answer              │
+│    • Graceful degradation: 4 operating modes            │
+│                                                         │
+│  Tab 6: ✅ Validation & Methodology                     │
 │    • Data sourcing documentation                        │
 │    • Theme identification methodology                   │
 │    • Insight generation process                         │
@@ -440,7 +448,47 @@ Each review is scored against all 10 patterns; primary theme = highest match cou
 └─────────────────────────────────────────────────────────┘
 ```
 
-### 8.2 Dashboard Data Dependencies
+### 8.2 RAG Chatbot Architecture
+
+```
+┌───────────────────────────────────────────────────────────┐
+│                  RAG CHATBOT (engine/chatbot.py)           │
+│                                                           │
+│  ┌─────────────────────────────────────────────┐          │
+│  │  RETRIEVAL LAYER                             │          │
+│  │  ┌─────────────┐    ┌────────────────────┐   │          │
+│  │  │ FAISS Search │ OR │ Keyword Overlap    │   │          │
+│  │  │ (cosine sim) │    │ (offline fallback) │   │          │
+│  │  └─────────────┘    └────────────────────┘   │          │
+│  └───────────────────┬─────────────────────────┘          │
+│                      │ top-K reviews                      │
+│  ┌───────────────────▼─────────────────────────┐          │
+│  │  CONTEXT ASSEMBLY                            │          │
+│  │  Evidence block + corpus stats               │          │
+│  │  + conversation history (last 3 turns)       │          │
+│  └───────────────────┬─────────────────────────┘          │
+│                      │                                    │
+│  ┌───────────────────▼─────────────────────────┐          │
+│  │  GENERATION LAYER                            │          │
+│  │  ┌──────────────┐    ┌───────────────────┐   │          │
+│  │  │ GPT-4o-mini  │ OR │ Offline Template  │   │          │
+│  │  │ (temp=0.3)   │    │ (rule-based)      │   │          │
+│  │  └──────────────┘    └───────────────────┘   │          │
+│  └───────────────────┬─────────────────────────┘          │
+│                      │                                    │
+│                      ▼                                    │
+│  Evidence-backed answer + source citations                │
+│  + metadata (mode, sources, categories)                   │
+└───────────────────────────────────────────────────────────┘
+
+4 Operating Modes:
+  🟢 Full RAG        = FAISS + GPT-4o-mini
+  🟡 AI + Keyword    = keyword retrieval + GPT-4o-mini
+  🟡 FAISS + Offline = FAISS + rule-based generation
+  🟠 Offline         = keyword retrieval + rule-based
+```
+
+### 8.3 Dashboard Data Dependencies
 
 ```
 app.py
@@ -453,9 +501,13 @@ app.py
   ├── engine/__init__.py
   │     └── builds/loads FAISS index (requires OPENAI_API_KEY)
   │
-  └── engine/insights.py
-        └── generates strategic answers (requires OPENAI_API_KEY)
-        └── offline fallback: rule-based pillar/category aggregation
+  ├── engine/insights.py
+  │     └── generates strategic answers (requires OPENAI_API_KEY)
+  │     └── offline fallback: rule-based pillar/category aggregation
+  │
+  └── engine/chatbot.py
+        └── RAGChatbot class: retrieval + generation + conversation memory
+        └── graceful degradation across 4 operating modes
 ```
 
 ---

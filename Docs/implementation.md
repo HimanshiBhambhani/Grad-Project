@@ -9,11 +9,12 @@
 5. [Classification Engine](#5-classification-engine)
 6. [Theme Identification](#6-theme-identification)
 7. [Discovery Engine (Semantic Search + Insights)](#7-discovery-engine)
-8. [Streamlit Dashboard](#8-streamlit-dashboard)
-9. [Automated Scraping (GitHub Actions)](#9-automated-scraping)
-10. [Pipeline Results & Statistics](#10-pipeline-results--statistics)
-11. [How to Run](#11-how-to-run)
-12. [Validation Framework](#12-validation-framework)
+8. [RAG Chatbot](#8-rag-chatbot)
+9. [Streamlit Dashboard](#9-streamlit-dashboard)
+10. [Automated Scraping (GitHub Actions)](#10-automated-scraping)
+11. [Pipeline Results & Statistics](#11-pipeline-results--statistics)
+12. [How to Run](#12-how-to-run)
+13. [Validation Framework](#13-validation-framework)
 
 ---
 
@@ -108,7 +109,8 @@ Data-Extraction/
 ├── engine/
 │   ├── __init__.py                 # FAISS vector index (build, load, search)
 │   ├── insights.py                 # AI insight generator for strategic questions
-│   └── themes.py                   # Theme identification via keyword patterns
+│  ├── themes.py                   # Theme identification via keyword patterns
+│  └── chatbot.py                  # RAG chatbot for evaluator Q&A
 ├── config.py                       # Central configuration (paths, rules, taxonomy)
 ├── main.py                         # Full pipeline orchestrator (CLI)
 ├── scrape_reviews.py               # Standalone scraper for GitHub Actions
@@ -338,13 +340,81 @@ Answers the 8 strategic questions:
 
 ---
 
-## 8. Streamlit Dashboard
+## 8. RAG Chatbot
+
+**File:** `engine/chatbot.py`
+
+### 8.1 Purpose
+
+An interactive conversational interface designed for evaluator Q&A sessions. The chatbot answers free-form questions about Blinkit's cross-shopping inertia problem using evidence retrieved from the cleaned review corpus.
+
+### 8.2 Architecture
+
+```
+    Evaluator Question
+          │
+          ▼
+    ┌──────────────┐       ┌──────────────────┐
+    │  Retrieval    │──────►│ FAISS Semantic   │  (if index built)
+    │  Layer        │       │ Search (top-K)   │
+    │               │──────►│ Keyword Overlap  │  (offline fallback)
+    └──────┬───────┘       └──────────────────┘
+           │
+           ▼
+    ┌──────────────┐
+    │  Context      │  Evidence block + corpus stats
+    │  Assembly     │  + conversation history (last 3 turns)
+    └──────┬───────┘
+           │
+           ▼
+    ┌──────────────┐       ┌──────────────────┐
+    │  Generation   │──────►│ GPT-4o-mini      │  (if API key present)
+    │  Layer        │──────►│ Offline Template │  (rule-based fallback)
+    └──────┬───────┘       └──────────────────┘
+           │
+           ▼
+    Evidence-Backed Answer
+    + Source citations
+    + Metadata (mode, sources, categories)
+```
+
+### 8.3 Operating Modes
+
+The chatbot degrades gracefully depending on available infrastructure:
+
+| Mode | FAISS Index | OpenAI Key | Retrieval | Generation |
+|------|-------------|------------|-----------|------------|
+| **Full RAG** | ✅ | ✅ | Semantic (cosine similarity) | GPT-4o-mini |
+| **AI + Keyword** | ❌ | ✅ | Keyword overlap scoring | GPT-4o-mini |
+| **FAISS + Offline** | ✅ | ❌ | Semantic search | Rule-based template |
+| **Offline** | ❌ | ❌ | Keyword overlap scoring | Rule-based template |
+
+### 8.4 Key Features
+
+- **Conversational memory:** Maintains last 3 Q&A pairs for multi-turn context
+- **Evidence grounding:** Every answer cites verbatim quotes with source, category, and pillar attribution
+- **Suggested questions:** 8 pre-built evaluator-style questions for quick access
+- **Expandable evidence panel:** Each answer shows retrieved review count, mode, sources used, and categories covered
+- **System prompt engineering:** Instructs the LLM to reference the 4 friction pillars, acknowledge evidence gaps, and stay concise (200–400 words)
+
+### 8.5 System Prompt Design
+
+The chatbot system prompt:
+- Identifies the LLM as a senior product analyst on Blinkit's Growth Team
+- Injects corpus-level statistics (total reviews, categories, top pillar, source channels)
+- Enforces citation format: `*"<quote>"* — <Source>, <Category>`
+- Requires gap acknowledgment when evidence is insufficient
+- Caps response length at 200–400 words for evaluator-friendly density
+
+---
+
+## 9. Streamlit Dashboard
 
 **File:** `app.py`
 
 **Launch:** `streamlit run app.py`
 
-### 5 Interactive Tabs
+### 6 Interactive Tabs
 
 | Tab | Purpose |
 |-----|---------|
@@ -352,11 +422,12 @@ Answers the 8 strategic questions:
 | **🔬 Theme Explorer** | Expandable theme cards with quotes, affected categories, pillar mapping; Theme × Category cross-pattern matrix |
 | **❓ Strategic Questions** | Dropdown to select any of the 8 strategic questions; generates evidence-backed insight with themes, quotes, and recommendations |
 | **🔎 Search & Explore** | Multi-filter (category, pillar, theme) + keyword search; browse and download filtered review data |
+| **💬 RAG Chatbot** | Conversational Q&A interface — ask any question, get evidence-backed answers with source citations; supports multi-turn conversation, suggested evaluator questions, and expandable evidence panels |
 | **✅ Validation & Methodology** | Documents how data is gathered, themes identified, insights generated, and quality validated |
 
 ---
 
-## 9. Automated Scraping (GitHub Actions)
+## 10. Automated Scraping (GitHub Actions)
 
 **File:** `.github/workflows/weekly-scrape.yml`
 
@@ -380,7 +451,7 @@ python scrape_reviews.py --max-reviews 500  # Custom limit
 
 ---
 
-## 10. Pipeline Results & Statistics
+## 11. Pipeline Results & Statistics
 
 ### Final Output Distribution
 
@@ -410,7 +481,7 @@ python scrape_reviews.py --max-reviews 500  # Custom limit
 
 ---
 
-## 11. How to Run
+## 12. How to Run
 
 ### Prerequisites
 
@@ -456,7 +527,7 @@ python scrape_reviews.py --max-reviews 200
 
 ---
 
-## 12. Validation Framework
+## 13. Validation Framework
 
 ### How data quality is validated
 
