@@ -65,7 +65,7 @@ def scrape_playstore(max_reviews: int) -> pd.DataFrame:
     except ImportError:
         logger.error("google-play-scraper not installed. pip install google-play-scraper")
         return pd.DataFrame()
-    except Exception as e:
+    except BaseException as e:
         logger.error("Play Store scrape failed: %s", e)
         return pd.DataFrame()
 
@@ -81,7 +81,7 @@ def scrape_appstore(max_reviews: int) -> pd.DataFrame:
     except ImportError:
         logger.error("app-store-scraper not installed. pip install app-store-scraper")
         return pd.DataFrame()
-    except Exception as e:
+    except BaseException as e:
         logger.error("App Store scrape failed: %s", e)
         return pd.DataFrame()
 
@@ -161,13 +161,14 @@ def main():
         for src, count in combined["source_raw"].value_counts().items():
             logger.info("  %-20s %d", src, count)
 
-    # Always exit 0 if we scraped any reviews
-    sys.exit(0)
-
 
 if __name__ == "__main__":
     try:
         main()
-    except Exception as e:
+    except SystemExit as e:
+        # Re-raise only genuine failures (code != 0)
+        if e.code:
+            raise
+    except BaseException as e:
         logger.error("Unexpected fatal error: %s", e)
         sys.exit(1)

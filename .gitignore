@@ -28,5 +28,5 @@ _write_urls.py
 *.tmp
 
 # Output directory — ignore generated data but KEEP scrapes tracked for CI
-Output/
+Output/*
 !Output/scrapes/

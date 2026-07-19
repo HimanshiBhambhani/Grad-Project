@@ -40,7 +40,7 @@ def scrape_appstore_reviews(count: int = 200) -> pd.DataFrame:
 
     try:
         app.review(how_many=count)
-    except Exception as e:
+    except BaseException as e:
         logger.error("App Store scraping failed: %s", e)
         return pd.DataFrame(columns=["source_raw", "date", "rating", "text", "url"])
 

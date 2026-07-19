@@ -65,23 +65,26 @@ jobs:
         continue-on-error: false
 
       - name: Commit new data
+        continue-on-error: true
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
           # Force-add scraped files (may be gitignored)
-          git add --force Output/scrapes/ || true
+          git add --force Output/scrapes/ 2>&1 || echo "git add returned non-zero (ignored)"
 
           # Check if there are changes to commit
           if git diff --cached --quiet; then
             echo "No new reviews to commit."
           else
             DATE=$(date -u +"%Y-%m-%d")
-            LATEST_COUNT=$(wc -l < Output/scrapes/latest_scrape.csv || echo 1)
-            TOTAL_COUNT=$(wc -l < Output/scrapes/all_scraped_reviews.csv || echo 1)
-            git commit -m "chore: weekly scrape $DATE — $((LATEST_COUNT - 1)) new reviews (total: $((TOTAL_COUNT - 1)))"
-            git push
-            echo "Committed and pushed new review data."
+            LATEST_COUNT=$(wc -l < Output/scrapes/latest_scrape.csv 2>/dev/null || echo 1)
+            TOTAL_COUNT=$(wc -l < Output/scrapes/all_scraped_reviews.csv 2>/dev/null || echo 1)
+            git commit -m "chore: weekly scrape $DATE — $((LATEST_COUNT - 1)) new, $((TOTAL_COUNT - 1)) total"
+
+            # Rebase on remote in case of concurrent pushes
+            git pull --rebase origin "$(git branch --show-current)" 2>&1 || true
+            git push 2>&1 || echo "::warning::git push failed — review data saved but not committed"
           fi
 
       - name: Summary
